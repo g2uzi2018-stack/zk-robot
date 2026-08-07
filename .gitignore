@@ -1,0 +1,15 @@
+# CMake 构建目录和生成文件。
+build/
+cmake-build-*/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+*.cmake
+
+# 编译产物。
+*.o
+*.obj
+*.a
+*.so
+*.exe

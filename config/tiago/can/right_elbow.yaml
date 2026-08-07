@@ -1,0 +1,61 @@
+# 配置文件格式版本。
+schema_version: 1
+
+# SocketCAN 接口名称；运行前请确保该接口已经创建并可用。
+interface: vcan4
+
+# 当前 CAN 总线上的关节配置列表。
+joints:
+  # 关节名称，需与机器人模型或控制器中的名称保持一致。
+  - name: arm_right_3_joint
+    # CAN 节点 ID。
+    node_id: 19
+    # 位置和速度使用弧度（radian）作为单位。
+    unit: radian
+
+    # 关节的位置和最大速度限制。
+    limits:
+      # 允许的最小位置，单位：弧度。
+      min_position: -0.7153981633974483
+      # 允许的最大位置，单位：弧度。
+      max_position: 3.8569908169872414
+      # 允许的最大速度，单位：弧度/秒。
+      max_velocity: 0.17453292519943295
+
+    # 编码器换算参数。
+    encoder:
+      # 电机每转对应的编码器计数。
+      counts_per_motor_revolution: 4096
+      # 减速比。
+      gear_ratio: 1.0
+      # 编码器方向，1 表示正向，-1 表示反向。
+      direction: 1
+      # 零点偏移，单位：弧度。
+      zero_offset: 0.0
+
+  # 关节名称，需与机器人模型或控制器中的名称保持一致。
+  - name: arm_right_4_joint
+    # CAN 节点 ID。
+    node_id: 20
+    # 位置和速度使用弧度（radian）作为单位。
+    unit: radian
+
+    # 关节的位置和最大速度限制。
+    limits:
+      # 允许的最小位置，单位：弧度。
+      min_position: -0.32269908169872414
+      # 允许的最大位置，单位：弧度。
+      max_position: 2.286194490192345
+      # 允许的最大速度，单位：弧度/秒。
+      max_velocity: 0.17453292519943295
+
+    # 编码器换算参数。
+    encoder:
+      # 电机每转对应的编码器计数。
+      counts_per_motor_revolution: 4096
+      # 减速比。
+      gear_ratio: 1.0
+      # 编码器方向，1 表示正向，-1 表示反向。
+      direction: 1
+      # 零点偏移，单位：弧度。
+      zero_offset: 0.0

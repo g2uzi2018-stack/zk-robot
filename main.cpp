@@ -97,5 +97,42 @@ int main()
 
         return 1;
     }
+    try
+    {
+        // 测试 Enable 控制命令。
+        const auto enable_frame = robot::tiago::encodeControlCommand(1, robot::tiago::MotorControlCommand::Enable);
+        std::cout << "===== Enable Command =====\n";
+        printFrame(enable_frame);
+
+        // 测试目标位置为 1000、速度限制为 200 的位置命令。
+        const auto position_frame = robot::tiago::encodePositionCommand(1, 1000, 200);
+        std::cout << "===== Position Command =====\n";
+        printFrame(position_frame);
+
+        // 手工构造一帧反馈：节点 1，位置 -1000，速度 -200，已使能且无故障。
+        robot::can::CanFrame feedback_frame;
+        feedback_frame.id = 0x181;
+        feedback_frame.data_length = 8;
+        feedback_frame.data = {0x18, 0xFC, 0xFF, 0xFF, 0x38, 0xFF, 0x01, 0x00};
+        std::cout << "===== Raw Feedback Frame =====\n";
+        printFrame(feedback_frame);
+
+        const auto feedback = robot::tiago::decodeFeedbackFrame(feedback_frame);
+        std::cout << "===== Decoded Feedback =====\n";
+        std::cout << "Node ID: " << static_cast<int>(feedback.node_id) << '\n';
+        std::cout << "Position counts: " << feedback.position_counts << '\n';
+        std::cout << "Velocity counts/s: " << feedback.velocity_counts_per_second << '\n';
+        std::cout << "Enabled: " << feedback.enabled << '\n';
+        std::cout << "Faulted: " << feedback.faulted << '\n';
+        std::cout << "Timed out: " << feedback.timed_out << '\n';
+        std::cout << "Fault code: " << static_cast<int>(feedback.fault_code) << '\n';
+    }
+    catch (const std::exception &error)
+    {
+        std::cerr << "Error: " << error.what() << '\n';
+
+        return 1;
+    }
+
     return 0;
 }

@@ -1,57 +1,69 @@
-# 配置文件格式版本。
+# 右夹爪CAN总线配置
+
 schema_version: 1
 
-# SocketCAN 接口名称；运行前请确保该接口已经创建并可用。
+# CAN接口
 interface: vcan7
 
-# 当前 CAN 总线上的关节配置列表。
+# 总线上的关节
 joints:
-  # 关节名称，需与机器人模型或控制器中的名称保持一致。
+
+  # 右夹爪右指关节
   - name: gripper_right_right_finger_joint
-    # CAN 节点 ID。
-    node_id: 24
-    # 位置和速度使用米（meter）作为单位。
-    unit: meter
 
-    # 关节的位置和最大速度限制。
+    # 关节限制
     limits:
-      # 允许的最小位置，单位：米。
+      # 最小位置(m)
       min_position: 0.001
-      # 允许的最大位置，单位：米。
+      # 最大位置(m)
       max_position: 0.044
-      # 允许的最大速度，单位：米/秒。
+      # 最大速度(m/s)
       max_velocity: 0.04908738521234052
 
-    # 编码器换算参数。
-    encoder:
-      # 每米对应的编码器计数。
-      counts_per_meter: 651.8986469044033
-      # 编码器方向，1 表示正向，-1 表示反向。
-      direction: 1
-      # 零点偏移，单位：米。
-      zero_offset: 0.0
+    # 电机配置
+    motor:
+      # CAN节点ID
+      node_id: 24
+      # 单位
+      # radian: 旋转关节
+      # meter: 直线关节
+      unit: meter
 
-  # 关节名称，需与机器人模型或控制器中的名称保持一致。
+      # 编码器参数
+      encoder:
+        # 每米对应编码器计数
+        counts_per_meter: 651.8986469044033
+        # 方向
+        # 1 正向
+        # -1 反向
+        direction: 1
+        # 零点偏移
+        zero_offset: 0.0
+
+  # 右夹爪左指关节
   - name: gripper_right_left_finger_joint
-    # CAN 节点 ID。
-    node_id: 25
-    # 位置和速度使用米（meter）作为单位。
-    unit: meter
 
-    # 关节的位置和最大速度限制。
+    # 关节限制
     limits:
-      # 允许的最小位置，单位：米。
+      # 最小位置(m)
       min_position: 0.001
-      # 允许的最大位置，单位：米。
+      # 最大位置(m)
       max_position: 0.044
-      # 允许的最大速度，单位：米/秒。
+      # 最大速度(m/s)
       max_velocity: 0.04908738521234052
 
-    # 编码器换算参数。
-    encoder:
-      # 每米对应的编码器计数。
-      counts_per_meter: 651.8986469044033
-      # 编码器方向，1 表示正向，-1 表示反向。
-      direction: 1
-      # 零点偏移，单位：米。
-      zero_offset: 0.0
+    # 电机配置
+    motor:
+      # CAN节点ID
+      node_id: 25
+      # 单位
+      unit: meter
+
+      # 编码器参数
+      encoder:
+        # 每米对应编码器计数
+        counts_per_meter: 651.8986469044033
+        # 方向
+        direction: 1
+        # 零点偏移
+        zero_offset: 0.0

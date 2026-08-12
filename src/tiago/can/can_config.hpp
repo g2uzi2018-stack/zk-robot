@@ -8,23 +8,18 @@
 
 namespace robot::tiago
 {
-    // 关节位置、速度和编码器零点偏移使用的物理单位。
+    // 关节位置和速度使用的物理单位。
     enum class JointUnit
     {
-        // 旋转关节单位：弧度。
         Radian,
-        // 直线关节单位：米。
         Meter
     };
 
-    // 单个关节的运动范围和速度限制。
+    // 关节的机械位置范围和最大速度。
     struct JointLimits
     {
-        // 允许的最小位置，单位由 CanJointConfig::unit 决定。
         double min_position{0.0};
-        // 允许的最大位置，单位由 CanJointConfig::unit 决定。
         double max_position{0.0};
-        // 允许的最大速度，单位由 CanJointConfig::unit 决定，并按秒计。
         double max_velocity{0.0};
     };
 
@@ -35,9 +30,9 @@ namespace robot::tiago
         std::uint32_t counts_per_motor_revolution{0};
         // 电机与关节之间的减速比。
         double gear_ratio{0.0};
-        // 编码器方向系数，1 表示正向，-1 表示反向。
+        // 编码器方向，1 表示正向，-1 表示反向。
         int direction{1};
-        // 编码器零点偏移，单位：弧度。
+        // 编码器零点偏移，单位为弧度。
         double zero_offset{0.0};
     };
 
@@ -46,41 +41,50 @@ namespace robot::tiago
     {
         // 每米对应的编码器计数。
         double counts_per_meter{0.0};
-        // 编码器方向系数，1 表示正向，-1 表示反向。
+        // 编码器方向，1 表示正向，-1 表示反向。
         int direction{1};
-        // 编码器零点偏移，单位：米。
+        // 编码器零点偏移，单位为米。
         double zero_offset{0.0};
     };
 
-    // 表示 EncoderConfig 在任意时刻可以保存：一个 RotaryEncoderConfig或一个 LinearEncoderConfig
+    // 根据关节类型保存旋转或直线编码器配置。
     using EncoderConfig = std::variant<RotaryEncoderConfig, LinearEncoderConfig>;
 
-    // 单个 CAN 关节的完整配置。
-    struct CanJointConfig
+    // 一个 CAN 节点对应的电机配置。
+    //
+    // 该配置不包含关节自身的机械位置和速度限制。
+    struct CanMotorConfig
     {
-        // 关节名称，通常需要与机器人模型中的名称保持一致。
-        std::string name;
         // CAN 节点 ID。
         std::uint16_t node_id{0};
-        // 关节位置和速度使用的单位。
+        // 电机位置和速度使用的单位。
         JointUnit unit{JointUnit::Radian};
-
-        // 关节的位置和速度限制。
-        JointLimits limits;
-        // 与关节单位匹配的编码器换算配置。
+        // 与关节单位匹配的编码器参数。
         EncoderConfig encoder;
     };
 
-    // 单条 CAN 总线的配置，包括总线接口和该总线上的关节。
+    // 一个机器人关节的完整配置。
+    //
+    // 包含关节名称、机械限制以及对应的 CAN 电机配置。
+    struct JointConfig
+    {
+        // 关节名称，通常与机器人模型中的名称保持一致。
+        std::string name;
+        // 关节的机械位置和速度限制。
+        JointLimits limits;
+        // 与该关节关联的 CAN 电机配置。
+        CanMotorConfig motor;
+    };
+
+    // 一条 CAN 总线的配置，包括接口名称和该总线上的关节列表。
     struct CanBusConfig
     {
         // SocketCAN 接口名称，例如 vcan0。
         std::string interface_name;
         // 该 CAN 总线上的关节配置列表。
-        std::vector<CanJointConfig> joints;
+        std::vector<JointConfig> joints;
     };
 
-    // 从 YAML 配置文件加载一条 CAN 总线的配置。
-    CanBusConfig loadCanBusConfig(
-        const std::filesystem::path &config_path);
+    // 从 YAML 配置文件加载并返回一条 CAN 总线的配置。
+    CanBusConfig loadCanBusConfig(const std::filesystem::path &config_path);
 }

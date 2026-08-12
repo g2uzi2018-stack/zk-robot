@@ -1,194 +1,144 @@
 #include "tiago/can/can_bus.hpp"
 #include "tiago/can/can_config.hpp"
-#include "tiago/can/encoder_conversion.hpp"
-#include "tiago/motor/can_motor.hpp"
+#include "tiago/joint/joint.hpp"
 
 #include <chrono>
-#include <cmath>
 #include <iostream>
 #include <stdexcept>
 #include <thread>
-#include <variant>
 
 int main()
 {
     try
     {
         // ------------------------------------------------------------
-        // 1. 加载左肩 CAN 总线配置。
+        // 1. 加载左肩 CAN 配置。
         // ------------------------------------------------------------
         const auto config = robot::tiago::loadCanBusConfig(
             "config/tiago/can/left_shoulder.yaml");
 
-        if (config.joints.empty())
+        if (config.joints.size() < 2)
         {
-            throw std::runtime_error("No joint found in CAN configuration");
+            throw std::runtime_error("left_shoulder config requires at least two joints");
         }
 
-        // 当前只测试左肩第一个关节。
-        const auto &joint_config = config.joints.front();
+        const auto &joint1_config = config.joints[0];
+        const auto &joint2_config = config.joints[1];
 
-        std::cout << "CAN interface: " << config.interface_name << '\n';
-
-        std::cout << "Joint: " << joint_config.name << '\n';
-
-        std::cout << "Motor node ID: " << joint_config.motor.node_id << "\n\n";
+        std::cout << "CAN interface: " << config.interface_name << "\n\n";
+        std::cout << "Joint 1: " << joint1_config.name << '\n';
+        std::cout << "Joint 1 node ID: " << joint1_config.motor.node_id << "\n\n";
+        std::cout << "Joint 2: " << joint2_config.name << '\n';
+        std::cout << "Joint 2 node ID: " << joint2_config.motor.node_id << "\n\n";
 
         // ------------------------------------------------------------
-        // 2. 创建 CAN 总线。
+        // 2. 创建唯一的一条共享 CAN 总线。
         // ------------------------------------------------------------
         robot::tiago::CanBus bus(config.interface_name);
 
         // ------------------------------------------------------------
-        // 3. 创建电机。
+        // 3. 两个 Joint 共享同一个 CanBus。
         // ------------------------------------------------------------
-        robot::tiago::CanMotor motor(joint_config.motor, bus);
+        robot::tiago::Joint joint1(joint1_config, bus);
+        robot::tiago::Joint joint2(joint2_config, bus);
 
         // ------------------------------------------------------------
-        // 4. 测试参数。
+        // 4. 使能两个关节。
         // ------------------------------------------------------------
-        constexpr double kTargetPosition = 0.8; // rad
+        std::cout << "Enable joint 1\n";
+        joint1.enable();
 
-        constexpr double kVelocityLimit = 0.1; // rad/s
+        std::cout << "Enable joint 2\n";
+        joint2.enable();
 
-        constexpr double kPositionTolerance = 0.01; // rad
+        // ------------------------------------------------------------
+        // 5. 设置两个不同目标。
+        // ------------------------------------------------------------
+        constexpr double kJoint1Target = 0.3;
+        constexpr double kJoint2Target = 0.7;
+        constexpr double kVelocity = 0.1;
 
-        // 模拟 Controller 的控制周期。
+        std::cout << "\nJoint 1 target: " << kJoint1Target << " rad\n";
+        std::cout << "Joint 2 target: " << kJoint2Target << " rad\n";
+        std::cout << "Velocity: " << kVelocity << " rad/s\n\n";
+
+        // ------------------------------------------------------------
+        // 6. 模拟 Controller，100 ms 周期刷新两个 Joint。
+        // ------------------------------------------------------------
         constexpr auto kControlPeriod = std::chrono::milliseconds{100};
+        constexpr int kMaximumCycles = 80;
 
-        // 最多运行 100 个周期，也就是约 10 秒。
-        constexpr int kMaximumCycles = 100;
-
-        const auto &encoder = std::get<robot::tiago::RotaryEncoderConfig>(
-            joint_config.motor.encoder);
-
-        // ------------------------------------------------------------
-        // 5. 使能电机。
-        // ------------------------------------------------------------
-        std::cout << "Enable motor\n";
-
-        motor.enable();
-
-        std::cout << "Target position: " << kTargetPosition << " rad\n";
-
-        std::cout << "Velocity limit: " << kVelocityLimit << " rad/s\n";
-
-        std::cout << "Control period: " << kControlPeriod.count() << " ms\n\n";
-
-        bool target_reached = false;
-
-        // ------------------------------------------------------------
-        // 6. 模拟 Controller 周期运行。
-        // ------------------------------------------------------------
         for (int cycle = 1; cycle <= kMaximumCycles; ++cycle)
         {
             const auto cycle_start = std::chrono::steady_clock::now();
+            // 两个关节都刷新目标。
+            joint1.commandPosition(kJoint1Target, kVelocity);
+            joint2.commandPosition(kJoint2Target, kVelocity);
 
-            // --------------------------------------------------------
-            // 6.1 每个控制周期都刷新目标。
-            //
-            // 这就是以后 Controller 最基本的工作模式：
-            //
-            // Controller
-            //     ↓
-            // 周期刷新目标
-            //     ↓
-            // CanMotor
-            // --------------------------------------------------------
-            motor.commandPosition(kTargetPosition, kVelocityLimit);
-
-            // --------------------------------------------------------
-            // 6.2 查询当前电机状态。
-            // --------------------------------------------------------
-            const auto feedback = motor.queryStatus();
-
-            if (!feedback)
+            // 每 10 个周期打印一次位置，
+            // 避免终端输出太密。
+            if (cycle % 10 == 0)
             {
-                std::cout << "[" << cycle << "] No feedback\n";
-            }
-            else
-            {
-                const double position = robot::tiago::countsToRadians(
-                    feedback->position_counts, encoder);
+                const auto position1 = joint1.readPosition();
+                const auto position2 = joint2.readPosition();
 
-                std::cout
-                    << "["
-                    << cycle
-                    << "] "
-                    << "position = "
-                    << position
-                    << " rad"
-                    << ", counts = "
-                    << feedback->position_counts
-                    << ", velocity = "
-                    << feedback->velocity_counts_per_second
-                    << " counts/s"
-                    << ", enabled = "
-                    << feedback->enabled
-                    << ", faulted = "
-                    << feedback->faulted
-                    << ", timed_out = "
-                    << feedback->timed_out
-                    << '\n';
+                std::cout << "[cycle " << cycle << "]\n";
 
-                // ----------------------------------------------------
-                // 6.3 出现故障则停止测试。
-                // ----------------------------------------------------
-                if (feedback->faulted)
+                if (position1)
                 {
-                    std::cout << "\nMotor fault detected.\n";
-
-                    break;
+                    std::cout << "  joint 1 position: " << *position1 << " rad\n";
+                }
+                else
+                {
+                    std::cout << "  joint 1 position: no feedback\n";
                 }
 
-                // ----------------------------------------------------
-                // 6.4 判断是否到达目标位置。
-                // ----------------------------------------------------
-                if (std::abs(position - kTargetPosition) <= kPositionTolerance)
+                if (position2)
                 {
-                    std::cout << "\nTarget reached.\n";
-
-                    target_reached = true;
-                    break;
+                    std::cout << "  joint 2 position: " << *position2 << " rad\n";
+                }
+                else
+                {
+                    std::cout << "  joint 2 position: no feedback\n";
                 }
             }
 
-            // --------------------------------------------------------
-            // 6.5 保持约 100 ms 控制周期。
-            //
-            // sleep_until 比固定 sleep_for(100ms) 更合理，
-            // 因为前面的 CAN 收发本身也消耗了一点时间。
-            // --------------------------------------------------------
             std::this_thread::sleep_until(cycle_start + kControlPeriod);
         }
 
-        if (!target_reached)
-        {
-            std::cout << "\nTarget was not reached within test time.\n";
-        }
-
         // ------------------------------------------------------------
-        // 7. 最后测试一次 readPosition()。
+        // 7. 最后读取一次位置。
         // ------------------------------------------------------------
-        const auto final_position = motor.readPosition();
+        std::cout << "\nFinal positions\n";
+        const auto final_position1 = joint1.readPosition();
+        const auto final_position2 = joint2.readPosition();
 
-        if (final_position)
+        if (final_position1)
         {
-            std::cout << "Final readPosition(): " << *final_position << " rad\n";
+            std::cout << "Joint 1: " << *final_position1 << " rad\n";
         }
         else
         {
-            std::cout << "Final readPosition(): no feedback\n";
+            std::cout << "Joint 1: no feedback\n";
+        }
+
+        if (final_position2)
+        {
+            std::cout << "Joint 2: " << *final_position2 << " rad\n";
+        }
+        else
+        {
+            std::cout << "Joint 2: no feedback\n";
         }
 
         // ------------------------------------------------------------
-        // 8. 测试结束，禁用电机。
+        // 8. 禁用两个关节。
         // ------------------------------------------------------------
-        std::cout << "\nDisable motor\n";
+        std::cout << "\nDisable joints\n";
+        joint1.disable();
+        joint2.disable();
 
-        motor.disable();
-
-        std::cout << "Test finished\n";
+        std::cout << "Dual joint test finished\n";
     }
     catch (const std::exception &error)
     {

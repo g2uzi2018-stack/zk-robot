@@ -104,18 +104,19 @@ namespace robot::tiago
         bus_.send(frame);
     }
 
-    // 主动读取当前电机位置。
     std::optional<double> CanMotor::readPosition()
     {
-        // 直接通过 QueryStatus 获取一份新的状态。
-        const auto feedback = queryStatus();
+        // 先把当前 CAN socket 中已经到达的反馈全部收进来。
+        bus_.collectPendingFeedback();
+
+        // 直接读取当前节点保存的最新状态。
+        const auto feedback = bus_.latestFeedback(config_.node_id);
 
         if (!feedback)
         {
             return std::nullopt;
         }
 
-        // encoder counts -> rad
         if (config_.unit == JointUnit::Radian)
         {
             const auto &encoder = std::get<RotaryEncoderConfig>(config_.encoder);
@@ -123,7 +124,6 @@ namespace robot::tiago
             return countsToRadians(feedback->position_counts, encoder);
         }
 
-        // encoder counts -> meter
         const auto &encoder = std::get<LinearEncoderConfig>(config_.encoder);
 
         return countsToMeters(feedback->position_counts, encoder);

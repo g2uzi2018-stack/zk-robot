@@ -1,48 +1,82 @@
 #include "tiago/motor/can_motor.hpp"
 
-#include "tiago/can/can_protocol.hpp"
 #include "tiago/can/encoder_conversion.hpp"
 
-#include <chrono>
-#include <stdexcept>
 #include <variant>
 
 namespace robot::tiago
 {
-    // 保存关节配置和 CAN 总线引用，后续命令与反馈均通过该总线处理。
-    CanJoint::CanJoint(const CanJointConfig &config, robot::can::SocketCan &can)
+    // 保存当前电机配置和 CAN 总线引用。
+    CanMotor::CanMotor(const CanMotorConfig &config, robot::can::SocketCan &can)
         : config_(config), can_(can)
     {
     }
 
-    // 确保目标位置没有超出关节配置的机械限位。
-    void CanJoint::validateTargetPosition(double position) const
+    // 发送电机使能命令。
+    void CanMotor::enable()
     {
-        if (position < config_.limits.min_position || position > config_.limits.max_position)
-        {
-            throw std::out_of_range("Target position exceeds joint limits");
-        }
+        const auto frame = encodeControlCommand(config_.node_id, MotorControlCommand::Enable);
+        can_.send(frame);
     }
 
-    // 确保速度上限为非负值，且不超过配置中的最大速度。
-    void CanJoint::validateVelocityLimit(double velocity_limit) const
+    // 发送电机禁用命令。
+    void CanMotor::disable()
     {
-        if (velocity_limit < 0.0)
-        {
-            throw std::out_of_range("Velocity limit must not be negative");
-        }
-        if (velocity_limit > config_.limits.max_velocity)
-        {
-            throw std::out_of_range("Velocity limit exceeds joint max_velocity");
-        }
+        const auto frame = encodeControlCommand(config_.node_id, MotorControlCommand::Disable);
+        can_.send(frame);
     }
 
-    // 校验并转换目标位置和速度上限，然后发送位置控制帧。
-    void CanJoint::commandPosition(double position, double velocity_limit)
+    // 清除当前电机的故障状态。
+    void CanMotor::clearFault()
     {
-        validateTargetPosition(position);
-        validateVelocityLimit(velocity_limit);
+        const auto frame = encodeControlCommand(config_.node_id, MotorControlCommand::ClearFault);
+        can_.send(frame);
+    }
 
+    // 停止当前电机运动。
+    void CanMotor::stop()
+    {
+        const auto frame = encodeControlCommand(config_.node_id, MotorControlCommand::Stop);
+        can_.send(frame);
+    }
+
+    // 从 CAN 总线上读取一帧属于当前电机的反馈。
+    std::optional<MotorFeedback> CanMotor::readFeedback()
+    {
+        // 最多等待 10 ms。
+        const auto frame = can_.receive(kFeedbackTimeout);
+        if (!frame)
+        {
+            return std::nullopt;
+        }
+
+        if (!isFeedbackFrameId(frame->id))
+        {
+            return std::nullopt;
+        }
+
+        const auto feedback = decodeFeedbackFrame(*frame);
+        if (feedback.node_id != config_.node_id)
+        {
+            return std::nullopt;
+        }
+
+        return feedback;
+    }
+
+    // 主动查询当前电机状态。
+    std::optional<MotorFeedback> CanMotor::queryStatus()
+    {
+        const auto frame = encodeControlCommand(config_.node_id, MotorControlCommand::QueryStatus);
+        can_.send(frame);
+        return readFeedback();
+    }
+
+    // 发送位置控制命令。
+    //
+    // CanMotor 不处理机械限位，只负责物理量、编码器计数和 CAN 协议之间的转换。
+    void CanMotor::commandPosition(double position, double velocity_limit)
+    {
         std::int32_t position_counts{};
         std::uint16_t velocity_limit_counts{};
 
@@ -59,33 +93,15 @@ namespace robot::tiago
             velocity_limit_counts = metersPerSecondToCountsPerSecond(velocity_limit, encoder);
         }
 
-        // 根据节点 ID 编码位置命令，并通过 SocketCAN 发送。
         const auto frame = encodePositionCommand(config_.node_id, position_counts, velocity_limit_counts);
         can_.send(frame);
     }
 
-    // 接收并解析一帧反馈，只返回当前关节对应的物理位置。
-    std::optional<double> CanJoint::readPosition()
+    // 读取当前电机位置。
+    std::optional<double> CanMotor::readPosition()
     {
-        // 最多等待 10 毫秒，避免读取操作长时间阻塞。
-        const auto frame = can_.receive(std::chrono::milliseconds{10});
-
-        // 超时未收到数据。
-        if (!frame)
-        {
-            return std::nullopt;
-        }
-
-        // 忽略非反馈帧。
-        if (!isFeedbackFrameId(frame->id))
-        {
-            return std::nullopt;
-        }
-
-        const auto feedback = decodeFeedbackFrame(*frame);
-
-        // 忽略属于其他 CAN 节点的反馈。
-        if (feedback.node_id != config_.node_id)
+        const auto feedback = readFeedback();
+        if (!feedback)
         {
             return std::nullopt;
         }
@@ -93,13 +109,10 @@ namespace robot::tiago
         if (config_.unit == JointUnit::Radian)
         {
             const auto &encoder = std::get<RotaryEncoderConfig>(config_.encoder);
-            return countsToRadians(feedback.position_counts, encoder);
+            return countsToRadians(feedback->position_counts, encoder);
         }
-        else
-        {
-            const auto &encoder = std::get<LinearEncoderConfig>(config_.encoder);
-            return countsToMeters(feedback.position_counts, encoder);
-        }
-    }
 
+        const auto &encoder = std::get<LinearEncoderConfig>(config_.encoder);
+        return countsToMeters(feedback->position_counts, encoder);
+    }
 }

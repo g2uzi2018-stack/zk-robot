@@ -15,6 +15,7 @@ src/tiago/can/can_config.cpp
 src/tiago/can/can_protocol.cpp
 src/tiago/can/encoder_conversion.cpp
 src/tiago/motor/can_motor.cpp
+src/tiago/can/can_bus.cpp
 )
 
 target_include_directories(robot PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)

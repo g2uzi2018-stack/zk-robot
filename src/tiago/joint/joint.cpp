@@ -65,14 +65,19 @@ namespace robot::tiago
         }
     }
 
+    void Joint::validateCommand(double position, double velocity_limit) const
+    {
+        validateTargetPosition(position);
+        validateVelocityLimit(velocity_limit);
+    }
+
     // 控制关节运动到目标位置。
     //
     // Joint 只负责机器人层面的约束检查。
     // 检查通过后，将实际控制交给 CanMotor。
     void Joint::commandPosition(double position, double velocity_limit)
     {
-        validateTargetPosition(position);
-        validateVelocityLimit(velocity_limit);
+        validateCommand(position, velocity_limit);
 
         motor_.commandPosition(position, velocity_limit);
     }

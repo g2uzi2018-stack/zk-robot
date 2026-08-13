@@ -17,6 +17,7 @@ add_executable(robot
     src/tiago/motor/can_motor.cpp
     src/tiago/can/can_bus.cpp
     src/tiago/joint/joint.cpp
+    src/tiago/arm/arm.cpp
 )
 
 target_include_directories(robot PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)

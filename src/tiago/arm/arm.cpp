@@ -121,6 +121,16 @@ namespace robot::tiago
 
     void Arm::commandPositions(const JointValues &positions, const JointValues &velocity_limits)
     {
+        // 先检查完整的 7 Joint 命令。
+        // 只要任意一个 Joint 参数非法，
+        // 本次整臂命令就不会发送。
+        for (std::size_t i = 0; i < kJointCount; ++i)
+        {
+            joints_[i].validateCommand(positions[i], velocity_limits[i]);
+        }
+
+        // 所有关节都检查通过以后，
+        // 再真正发送 7 个位置命令。
         for (std::size_t i = 0; i < kJointCount; ++i)
         {
             joints_[i].commandPosition(positions[i], velocity_limits[i]);

@@ -51,7 +51,7 @@ namespace robot::tiago
         // CanMotor 不检查机器人关节机械限位。
         void commandPosition(double position, double velocity_limit);
 
-        // 主动查询并返回当前电机位置。
+        // 读取并返回当前电机最新位置。
         //
         // Radian:
         //   返回 rad

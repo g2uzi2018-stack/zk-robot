@@ -1,0 +1,30 @@
+# TIAGo躯干升降CAN总线配置
+
+schema_version: 1
+
+# CAN接口
+interface: vcan9
+
+joints:
+  - name: torso_lift_joint
+    limits:
+      # 升降位置范围，单位m
+      min_position: 0.0
+      max_position: 0.35
+
+      # 工程速度上限，单位m/s
+      # Webots模型最大约0.07m/s，
+      # 当前控制层限制为0.05m/s
+      max_velocity: 0.05
+
+    motor:
+      # Node ID = 0x0C
+      node_id: 12
+      unit: meter
+      encoder:
+        # 仿真线性编码标定
+        counts_per_meter: 651.8986469044033
+
+        direction: 1
+
+        zero_offset: 0.0

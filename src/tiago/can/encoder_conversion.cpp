@@ -112,4 +112,52 @@ namespace robot::tiago
         // CAN 协议中的速度字段使用无符号 16 位整数。
         return static_cast<std::uint16_t>(std::round(counts_per_second));
     }
+
+    // 将旋转关节速度转换为有符号编码器计数速度。
+    std::int32_t radiansPerSecondToSignedCountsPerSecond(double radians_per_second, const RotaryEncoderConfig &config)
+    {
+        if (config.counts_per_motor_revolution == 0)
+        {
+            throw std::invalid_argument("counts_per_motor_revolution cannot be zero");
+        }
+
+        if (config.gear_ratio <= 0.0)
+        {
+            throw std::invalid_argument("gear_ratio must be positive");
+        }
+
+        const double joint_revolutions_per_second = radians_per_second / (2.0 * M_PI);
+
+        const double motor_revolutions_per_second = joint_revolutions_per_second * config.gear_ratio;
+
+        double counts_per_second = motor_revolutions_per_second * static_cast<double>(config.counts_per_motor_revolution);
+
+        counts_per_second *= config.direction;
+
+        return static_cast<std::int32_t>(std::round(counts_per_second));
+    }
+
+    // 将有符号编码器计数速度转换为旋转关节速度。
+    double countsPerSecondToRadiansPerSecond(std::int32_t counts_per_second, const RotaryEncoderConfig &config)
+    {
+        if (config.counts_per_motor_revolution == 0)
+        {
+            throw std::invalid_argument("counts_per_motor_revolution cannot be zero");
+        }
+
+        if (config.gear_ratio <= 0.0)
+        {
+            throw std::invalid_argument("gear_ratio must be positive");
+        }
+
+        const double motor_revolutions_per_second = static_cast<double>(counts_per_second) / static_cast<double>(config.counts_per_motor_revolution);
+
+        const double joint_revolutions_per_second = motor_revolutions_per_second / config.gear_ratio;
+
+        double radians_per_second = joint_revolutions_per_second * 2.0 * M_PI;
+
+        radians_per_second *= config.direction;
+
+        return radians_per_second;
+    }
 }

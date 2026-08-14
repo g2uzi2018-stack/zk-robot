@@ -23,6 +23,9 @@ namespace
     // 位置控制命令码。
     constexpr std::uint8_t kPositionCommandCode = 0x10;
 
+    // 速度控制命令码。
+    constexpr std::uint8_t kVelocityCommandCode = 0x11;
+
     // 反馈状态字段中的状态位掩码。
     constexpr std::uint8_t kEnabledMask = 0x01;
     constexpr std::uint8_t kFaultedMask = 0x02;
@@ -160,5 +163,23 @@ namespace robot::tiago
         feedback.timed_out = (status & kTimedOutMask) != 0;
         feedback.fault_code = frame.data[7];
         return feedback;
+    }
+
+    can::CanFrame encodeVelocityCommand(std::uint16_t node_id, std::int32_t target_velocity_counts_per_second)
+    {
+        validateNodeId(node_id);
+
+        can::CanFrame frame;
+        frame.id = static_cast<std::uint16_t>(kCommandIdBase + node_id);
+
+        frame.data_length = kProtocolDataLength;
+
+        writeInt32LittleEndian(frame.data, 0, target_velocity_counts_per_second);
+
+        // byte 4..5 对 velocity command 不使用，
+        // 保持默认 0。
+        frame.data[6] = kVelocityCommandCode;
+
+        return frame;
     }
 }

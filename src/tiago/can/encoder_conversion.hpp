@@ -23,4 +23,12 @@ namespace robot::tiago
 
     // 将直线关节的速度上限从米/秒转换为编码器计数/秒。
     std::uint16_t metersPerSecondToCountsPerSecond(double meters_per_second, const LinearEncoderConfig &config);
+
+    // 将旋转关节实际速度从 rad/s 转换为有符号 counts/s。
+    // 不应用零点偏移。
+    std::int32_t radiansPerSecondToSignedCountsPerSecond(double radians_per_second, const RotaryEncoderConfig &config);
+
+    // 将有符号 counts/s 转换为旋转关节实际速度 rad/s。
+    // 不应用零点偏移。
+    double countsPerSecondToRadiansPerSecond(std::int32_t counts_per_second, const RotaryEncoderConfig &config);
 }

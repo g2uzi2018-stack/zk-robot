@@ -2,6 +2,7 @@
 
 #include "tiago/can/encoder_conversion.hpp"
 
+#include <stdexcept>
 #include <variant>
 
 namespace robot::tiago
@@ -126,5 +127,43 @@ namespace robot::tiago
         const auto &encoder = std::get<LinearEncoderConfig>(config_.encoder);
 
         return countsToMeters(feedback->position_counts, encoder);
+    }
+    // 发送旋转电机的速度控制命令。
+    void CanMotor::commandVelocity(double velocity)
+    {
+        if (config_.unit != JointUnit::Radian)
+        {
+            throw std::logic_error("Velocity command currently requires radian motor unit");
+        }
+
+        const auto &encoder = std::get<RotaryEncoderConfig>(config_.encoder);
+
+        const auto velocity_counts = radiansPerSecondToSignedCountsPerSecond(velocity, encoder);
+
+        const auto frame = encodeVelocityCommand(config_.node_id, velocity_counts);
+
+        bus_.send(frame);
+    }
+
+    // 读取当前电机最新的旋转速度反馈。
+    std::optional<double> CanMotor::readVelocity()
+    {
+        bus_.collectPendingFeedback();
+
+        const auto feedback = bus_.latestFeedback(config_.node_id);
+
+        if (!feedback)
+        {
+            return std::nullopt;
+        }
+
+        if (config_.unit != JointUnit::Radian)
+        {
+            throw std::logic_error("Velocity feedback currently requires radian motor unit");
+        }
+
+        const auto &encoder = std::get<RotaryEncoderConfig>(config_.encoder);
+
+        return countsPerSecondToRadiansPerSecond(feedback->velocity_counts_per_second, encoder);
     }
 }

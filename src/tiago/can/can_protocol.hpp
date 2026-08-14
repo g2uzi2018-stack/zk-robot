@@ -9,10 +9,10 @@ namespace robot::tiago
     // 电机控制命令码。
     enum class MotorControlCommand : std::uint8_t
     {
-        Enable      = 0x01,
-        Disable     = 0x02,
-        ClearFault  = 0x03,
-        Stop        = 0x12,
+        Enable = 0x01,
+        Disable = 0x02,
+        ClearFault = 0x03,
+        Stop = 0x12,
         QueryStatus = 0x20
     };
 
@@ -40,6 +40,10 @@ namespace robot::tiago
 
     // 编码带目标位置和速度限制的位置控制命令帧。
     can::CanFrame encodePositionCommand(std::uint16_t node_id, std::int32_t target_position_counts, std::uint16_t velocity_limit_counts_per_second);
+
+    // 编码速度控制命令帧。
+    // target_velocity_counts_per_second 为有符号速度。
+    can::CanFrame encodeVelocityCommand(std::uint16_t node_id, std::int32_t target_velocity_counts_per_second);
 
     // 判断帧 ID 是否属于电机反馈帧范围。
     bool isFeedbackFrameId(std::uint16_t frame_id) noexcept;

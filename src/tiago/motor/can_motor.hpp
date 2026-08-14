@@ -60,6 +60,15 @@ namespace robot::tiago
         //   返回 m
         std::optional<double> readPosition();
 
+        // 发送速度控制命令。
+        //
+        // 当前用于旋转电机，velocity 单位 rad/s。
+        // 允许正负速度。
+        void commandVelocity(double velocity);
+
+        // 读取最新旋转速度，单位 rad/s。
+        std::optional<double> readVelocity();
+
     private:
         // 等待电机反馈的默认超时时间。
         static constexpr std::chrono::milliseconds kFeedbackTimeout{10};

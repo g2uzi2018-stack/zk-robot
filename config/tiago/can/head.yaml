@@ -1,0 +1,59 @@
+# TIAGo 头部 CAN 总线配置
+
+schema_version: 1
+
+# CAN 接口
+interface: vcan10
+
+# 总线上的关节
+joints:
+  # 头部第 1 关节
+  - name: head_1_joint
+    # 关节限制
+    limits:
+      # URDF 软限位，单位 rad
+      min_position: -1.238997
+      max_position: 1.238997
+
+      # 工程速度上限
+      # 10 deg/s
+      max_velocity: 0.17453292519943295
+
+    motor:
+      # Node ID = 0x0D
+      node_id: 13
+      unit: radian
+      encoder:
+        # 仿真默认编码器参数
+        counts_per_motor_revolution: 4096
+        gear_ratio: 1.0
+
+        # 编码器方向
+        direction: 1
+
+        # 零点偏移，单位 rad
+        zero_offset: 0.0
+
+  # 头部第 2 关节
+  - name: head_2_joint
+    limits:
+      # URDF 软限位，单位 rad
+      min_position: -0.977198
+      max_position: 0.715398
+
+      # 工程速度上限
+      # 10 deg/s
+      max_velocity: 0.17453292519943295
+
+    motor:
+      # Node ID = 0x0E
+      node_id: 14
+      unit: radian
+      encoder:
+        # 仿真默认编码器参数
+        counts_per_motor_revolution: 4096
+        gear_ratio: 1.0
+
+        # 编码器方向和零点偏移
+        direction: 1
+        zero_offset: 0.0

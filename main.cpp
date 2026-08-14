@@ -1,6 +1,4 @@
-#include "tiago/arm/arm.hpp"
 #include "tiago/can/can_config.hpp"
-#include "tiago/controller/arm_controller.hpp"
 #include "tiago/gripper/gripper.hpp"
 
 #include <chrono>
@@ -10,10 +8,7 @@
 
 namespace
 {
-    // 机械臂和夹爪示例共用的控制周期。
-    constexpr auto kControlPeriod = std::chrono::milliseconds{100};
-
-    void printGripperPositions(const robot::tiago::Gripper::FingerPositions &positions)
+    void printPositions(const robot::tiago::Gripper::FingerPositions &positions)
     {
         const char *names[] = {"right finger", "left finger"};
 
@@ -31,152 +26,53 @@ namespace
             }
         }
     }
-
-    // 在夹爪运动期间持续刷新机械臂和夹爪控制目标。
-    void runGripperTarget(robot::tiago::ArmController &arm_controller, robot::tiago::Gripper &gripper, double finger_position, double velocity_limit, int cycles)
-    {
-        std::cout << "\nGripper target: " << finger_position << " m\n";
-
-        for (int cycle = 1; cycle <= cycles; ++cycle)
-        {
-            const auto cycle_start = std::chrono::steady_clock::now();
-
-            // 持续维持机械臂姿态。
-            arm_controller.update();
-
-            // 持续刷新夹爪目标。
-            gripper.commandSymmetric(finger_position, velocity_limit);
-
-            const auto positions = gripper.readPositions();
-
-            if (cycle == 1 || cycle % 5 == 0 || cycle == cycles)
-            {
-                std::cout << "\n[cycle " << cycle << "]\n";
-
-                printGripperPositions(positions);
-            }
-
-            std::this_thread::sleep_until(cycle_start + kControlPeriod);
-        }
-    }
 }
 
 int main()
 {
     try
     {
-        // ------------------------------------------------------------
-        // 1. 创建左臂。
-        // ------------------------------------------------------------
-        const auto shoulder_config = robot::tiago::loadCanBusConfig("config/tiago/can/left_shoulder.yaml");
-        const auto elbow_config = robot::tiago::loadCanBusConfig("config/tiago/can/left_elbow.yaml");
-        const auto wrist_config = robot::tiago::loadCanBusConfig("config/tiago/can/left_wrist.yaml");
-        robot::tiago::Arm arm(shoulder_config, elbow_config, wrist_config);
+        // 只读取反馈，不发送任何会改变设备状态的命令。
+        const auto config = robot::tiago::loadCanBusConfig("config/tiago/can/right_gripper.yaml");
 
-        robot::tiago::ArmController arm_controller(arm);
+        robot::tiago::Gripper gripper(config);
 
-        // ------------------------------------------------------------
-        // 2. 创建左夹爪。
-        // ------------------------------------------------------------
-        const auto gripper_config = robot::tiago::loadCanBusConfig("config/tiago/can/left_gripper.yaml");
-        robot::tiago::Gripper gripper(gripper_config);
+        std::cout << "Right gripper clean-start feedback test\n\n";
 
-        // ------------------------------------------------------------
-        // 3. 左臂抬起姿态。
-        // ------------------------------------------------------------
-        const robot::tiago::Arm::JointValues arm_target{
-            0.35,
-            -0.60,
-            1.20,
-            1.00,
-            -0.40,
-            0.60,
-            0.20};
+        std::cout << "CAN interface: " << config.interface_name << '\n';
 
-        const robot::tiago::Arm::JointValues arm_velocity_limits{
-            0.10,
-            0.10,
-            0.10,
-            0.10,
-            0.10,
-            0.10,
-            0.10};
+        std::cout << "Finger 1: " << gripper.finger(0).name() << '\n';
 
-        std::cout << "Clear arm faults\n";
-        arm.clearFault();
+        std::cout << "Finger 2: " << gripper.finger(1).name() << "\n\n";
 
-        std::cout << "Enable arm\n";
-        arm.enable();
+        std::cout << "IMPORTANT:\n"
+                  << "No clearFault\n"
+                  << "No enable\n"
+                  << "No position command\n"
+                  << "No stop command\n\n";
 
-        arm_controller.start(arm_target, arm_velocity_limits);
+        // 给 gateway 一点时间产生周期反馈。
+        std::this_thread::sleep_for(std::chrono::milliseconds{200});
 
-        // ------------------------------------------------------------
-        // 4. 先只移动机械臂。
-        // ------------------------------------------------------------
-        std::cout << "\nRaise left arm\n";
-
-        for (int cycle = 1; cycle <= 100; ++cycle)
+        // 连续观察 5 秒。
+        // 全程只读取已有反馈，不发送任何控制命令。
+        for (int sample = 1; sample <= 50; ++sample)
         {
-            const auto cycle_start = std::chrono::steady_clock::now();
+            const auto positions = gripper.readPositions();
 
-            arm_controller.update();
-
-            if (cycle % 10 == 0)
+            if (sample == 1 || sample % 5 == 0)
             {
-                std::cout << "Arm cycle " << cycle << ", target reached: "
-                          << (arm_controller.targetReached(0.01) ? "yes" : "no") << '\n';
+                std::cout << "[sample " << sample << "]\n";
+
+                printPositions(positions);
+
+                std::cout << '\n';
             }
 
-            if (arm_controller.targetReached(0.01))
-            {
-                std::cout << "Arm reached raised pose\n";
-                break;
-            }
-
-            std::this_thread::sleep_until(cycle_start + kControlPeriod);
+            std::this_thread::sleep_for(std::chrono::milliseconds{100});
         }
 
-        // ------------------------------------------------------------
-        // 5. 机械臂保持运行，再启动夹爪。
-        // ------------------------------------------------------------
-        std::cout << "\nClear gripper faults\n";
-        gripper.clearFault();
-
-        std::cout << "Enable gripper\n";
-        gripper.enable();
-
-        std::this_thread::sleep_for(std::chrono::milliseconds{100});
-
-        std::cout << "\nInitial gripper positions\n";
-
-        printGripperPositions(gripper.readPositions());
-
-        // ------------------------------------------------------------
-        // 6. 打开夹爪。
-        // ------------------------------------------------------------
-        runGripperTarget(arm_controller, gripper, 0.025, 0.01, 30);
-
-        // ------------------------------------------------------------
-        // 7. 再收回。
-        // ------------------------------------------------------------
-        runGripperTarget(arm_controller, gripper, 0.010, 0.01, 30);
-
-        // ------------------------------------------------------------
-        // 8. 停止。
-        // ------------------------------------------------------------
-        std::cout << "\nStop gripper\n";
-        gripper.stop();
-
-        std::cout << "Disable gripper\n";
-        gripper.disable();
-
-        std::cout << "Stop arm controller\n";
-        arm_controller.stop();
-
-        std::cout << "Disable arm\n";
-        arm.disable();
-
-        std::cout << "\nArm + gripper test finished\n";
+        std::cout << "Clean-start feedback test finished\n";
     }
     catch (const std::exception &error)
     {

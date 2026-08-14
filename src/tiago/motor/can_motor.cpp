@@ -98,8 +98,7 @@ namespace robot::tiago
             velocity_limit_counts = metersPerSecondToCountsPerSecond(velocity_limit, encoder);
         }
 
-        const auto frame = encodePositionCommand(
-            config_.node_id, position_counts, velocity_limit_counts);
+        const auto frame = encodePositionCommand(config_.node_id, position_counts, velocity_limit_counts);
 
         bus_.send(frame);
     }

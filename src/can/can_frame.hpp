@@ -5,6 +5,7 @@
 
 namespace robot::can
 {
+    // 项目内部使用的经典 CAN 标准数据帧。
     struct CanFrame
     {
         // Classical CAN 标准帧 ID：0 ~ 0x7FF

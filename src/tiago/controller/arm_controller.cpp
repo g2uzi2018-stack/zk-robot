@@ -141,8 +141,7 @@ namespace robot::tiago
 
     bool ArmController::targetReached(double position_tolerance) const
     {
-        if (!std::isfinite(position_tolerance) ||
-            position_tolerance <= 0.0)
+        if (!std::isfinite(position_tolerance) || position_tolerance <= 0.0)
         {
             throw std::invalid_argument("Position tolerance must be a positive finite value");
         }

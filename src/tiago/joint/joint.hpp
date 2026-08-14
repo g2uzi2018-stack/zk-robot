@@ -47,6 +47,7 @@ namespace robot::tiago
         // 停止当前关节运动。
         void stop();
 
+        // 同时检查目标位置和速度限制。
         void validateCommand(double position, double velocity_limit) const;
 
         // 控制关节运动到目标位置。

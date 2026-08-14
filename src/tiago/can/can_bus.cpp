@@ -33,8 +33,7 @@ namespace robot::tiago
         //   已经有这个 node_id -> 覆盖
         //
         // 因此始终只保存最新反馈。
-        latest_feedback_[feedback.node_id] =
-            feedback;
+        latest_feedback_[feedback.node_id] = feedback;
     }
 
     // 把当前 SocketCAN 中已经排队的所有帧取出来。
@@ -56,8 +55,7 @@ namespace robot::tiago
     }
 
     // 等待指定 node_id 的新反馈。
-    std::optional<MotorFeedback> CanBus::waitForFeedback(
-        std::uint16_t node_id, std::chrono::milliseconds timeout)
+    std::optional<MotorFeedback> CanBus::waitForFeedback(std::uint16_t node_id, std::chrono::milliseconds timeout)
     {
         const auto deadline =
             std::chrono::steady_clock::now() + timeout;
@@ -71,8 +69,7 @@ namespace robot::tiago
                 return std::nullopt;
             }
 
-            auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
-                deadline - now);
+            auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now);
 
             // duration_cast 可能把不足 1 ms 截断成 0。
             // 如果实际上还有剩余时间，至少等待 1 ms。
@@ -81,8 +78,7 @@ namespace robot::tiago
                 remaining = std::chrono::milliseconds{1};
             }
 
-            const auto frame =
-                socket_.receive(remaining);
+            const auto frame = socket_.receive(remaining);
 
             if (!frame)
             {
@@ -121,8 +117,7 @@ namespace robot::tiago
     }
 
     // 读取 map 中某节点当前保存的最新反馈。
-    std::optional<MotorFeedback> CanBus::latestFeedback(
-        std::uint16_t node_id) const
+    std::optional<MotorFeedback> CanBus::latestFeedback(std::uint16_t node_id) const
     {
         const auto feedback = latest_feedback_.find(node_id);
 

@@ -51,8 +51,7 @@ namespace robot::tiago
         //
         // 收到目标节点反馈后返回该节点最新状态。
         // 超时则返回 std::nullopt。
-        std::optional<MotorFeedback> waitForFeedback(
-            std::uint16_t node_id, std::chrono::milliseconds timeout);
+        std::optional<MotorFeedback> waitForFeedback(std::uint16_t node_id, std::chrono::milliseconds timeout);
 
         // 获取某个节点当前已经保存的最新反馈。
         //

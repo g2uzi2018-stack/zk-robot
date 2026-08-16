@@ -1,81 +1,130 @@
+#include "tiago/can/can_bus.hpp"
 #include "tiago/can/can_config.hpp"
-#include "tiago/controller/torso_controller.hpp"
-#include "tiago/torso/torso.hpp"
+#include "tiago/motor/can_motor.hpp"
 
 #include <chrono>
+#include <cstdint>
 #include <iostream>
-#include <stdexcept>
 #include <thread>
 
 namespace
 {
-    constexpr auto kControlPeriod = std::chrono::milliseconds{100};
+    constexpr double kPi = 3.14159265358979323846;
 
-    constexpr double kPositionTolerance = 0.003; // 3 mm
+    constexpr double kWheelRadius = 0.0985;
+    constexpr double kWheelSeparation = 0.4044;
 
-    const char *stateName(robot::tiago::TorsoController::ControlState state)
+    // 底盘角速度 rad/s。
+    constexpr double kAngularVelocity = 0.5;
+
+    // 原地旋转时单轮角速度。
+    constexpr double kWheelVelocity =
+        kAngularVelocity *
+        kWheelSeparation /
+        (2.0 * kWheelRadius);
+
+    // 旋转90度所需时间。
+    constexpr double kTurnDurationSeconds =
+        (kPi / 2.0) /
+        kAngularVelocity;
+
+    constexpr auto kControlPeriod =
+        std::chrono::milliseconds{100};
+
+    robot::tiago::CanMotorConfig makeMotorConfig(
+        std::uint16_t node_id)
     {
-        using State = robot::tiago::TorsoController::ControlState;
+        robot::tiago::RotaryEncoderConfig encoder;
 
-        switch (state)
-        {
-        case State::Idle:
-            return "Idle";
-        case State::Running:
-            return "Running";
-        case State::Failed:
-            return "Failed";
-        }
+        encoder.counts_per_motor_revolution = 4096;
+        encoder.gear_ratio = 1.0;
+        encoder.direction = 1;
+        encoder.zero_offset = 0.0;
 
-        return "Unknown";
+        robot::tiago::CanMotorConfig config;
+
+        config.node_id = node_id;
+        config.unit =
+            robot::tiago::JointUnit::Radian;
+
+        config.encoder = encoder;
+
+        return config;
     }
 
-    void printPosition(const std::optional<double> &position)
+    void driveFor(
+        robot::tiago::CanMotor &right_motor,
+        robot::tiago::CanMotor &left_motor,
+        double right_velocity,
+        double left_velocity,
+        double duration_seconds)
     {
-        std::cout << "  torso_lift_joint: ";
+        const auto start =
+            std::chrono::steady_clock::now();
 
-        if (position)
+        const auto duration =
+            std::chrono::duration<double>{
+                duration_seconds};
+
+        int cycle = 0;
+
+        while (std::chrono::steady_clock::now() -
+                   start <
+               duration)
         {
-            std::cout << *position << " m\n";
-        }
-        else
-        {
-            std::cout << "no feedback\n";
-        }
-    }
+            const auto cycle_start =
+                std::chrono::steady_clock::now();
 
-    void runUntilReached(robot::tiago::TorsoController &controller, int max_cycles)
-    {
-        for (int cycle = 1; cycle <= max_cycles; ++cycle)
-        {
-            const auto cycle_start = std::chrono::steady_clock::now();
+            right_motor.commandVelocity(
+                right_velocity);
 
-            controller.update();
+            left_motor.commandVelocity(
+                left_velocity);
 
-            if (cycle == 1 || cycle % 5 == 0)
+            ++cycle;
+
+            if (cycle % 5 == 0)
             {
-                const bool reached = controller.targetReached(kPositionTolerance);
+                const auto right =
+                    right_motor.readVelocity();
 
-                std::cout << "\n[cycle " << cycle << "]\n";
+                const auto left =
+                    left_motor.readVelocity();
 
-                std::cout << "Target: " << controller.targetPosition() << " m\n";
+                std::cout
+                    << "  right: ";
 
-                std::cout << "Current position:\n";
+                if (right)
+                    std::cout << *right;
+                else
+                    std::cout << "no feedback";
 
-                printPosition(controller.currentPosition());
+                std::cout
+                    << " rad/s, left: ";
 
-                std::cout << "Target reached: " << (reached ? "yes" : "no") << '\n';
+                if (left)
+                    std::cout << *left;
+                else
+                    std::cout << "no feedback";
 
-                if (reached)
-                {
-                    return;
-                }
+                std::cout << " rad/s\n";
             }
 
-            std::this_thread::sleep_until(cycle_start + kControlPeriod);
+            std::this_thread::sleep_until(
+                cycle_start +
+                kControlPeriod);
         }
+    }
 
-        throw std::runtime_error("Torso target was not reached");
+    void stopAndWait(
+        robot::tiago::CanMotor &right_motor,
+        robot::tiago::CanMotor &left_motor)
+    {
+        right_motor.stop();
+        left_motor.stop();
+
+        std::this_thread::sleep_for(
+            std::chrono::seconds{1});
     }
 }
 
@@ -83,209 +132,107 @@ int main()
 {
     try
     {
-        // ============================================================
-        // 1. Create Torso + Controller
-        // ============================================================
-        const auto config = robot::tiago::loadCanBusConfig("config/tiago/can/torso.yaml");
+        robot::tiago::CanBus bus{
+            "vcan8"};
 
-        robot::tiago::Torso torso(config);
-        robot::tiago::TorsoController controller(torso);
+        robot::tiago::CanMotor right_motor{
+            makeMotorConfig(10),
+            bus};
 
-        std::cout << "Torso CAN interface: " << config.interface_name << '\n';
+        robot::tiago::CanMotor left_motor{
+            makeMotorConfig(11),
+            bus};
 
-        std::cout << "Joint: " << torso.joint().name() << "\n\n";
+        std::cout
+            << "Base rotation test\n\n";
 
-        // ============================================================
-        // 2. Idle feedback
-        // ============================================================
-        std::this_thread::sleep_for(std::chrono::milliseconds{200});
+        std::cout
+            << "Wheel velocity: "
+            << kWheelVelocity
+            << " rad/s\n";
 
-        controller.update();
+        std::cout
+            << "90 degree duration: "
+            << kTurnDurationSeconds
+            << " s\n";
 
-        std::cout << "Initial controller state: " << stateName(controller.state()) << '\n';
+        std::cout
+            << "\nClear faults\n";
 
-        std::cout << "Initial position:\n";
+        right_motor.clearFault();
+        left_motor.clearFault();
 
-        printPosition(controller.currentPosition());
+        std::cout
+            << "Enable wheels\n";
 
-        // ============================================================
-        // 3. Hardware lifecycle
-        // ============================================================
-        std::cout << "\nClear torso faults\n";
-
-        torso.clearFault();
-
-        std::cout << "Enable torso\n";
-
-        torso.enable();
-
-        constexpr double kVelocityLimit = 0.03; // m/s
+        right_motor.enable();
+        left_motor.enable();
 
         // ============================================================
-        // 4. TEST 1 - start()
+        // 左转90度
         // ============================================================
-        constexpr double kTargetA = 0.22;
+        std::cout
+            << "\n====================================\n"
+            << "LEFT TURN 90 DEGREES\n"
+            << "====================================\n";
 
-        std::cout << "\n====================================\n"
-                  << "[TEST 1] TorsoController start -> 0.22 m\n"
-                  << "====================================\n";
+        driveFor(
+            right_motor,
+            left_motor,
+            +kWheelVelocity,
+            -kWheelVelocity,
+            kTurnDurationSeconds);
 
-        controller.start(kTargetA, kVelocityLimit);
+        stopAndWait(
+            right_motor,
+            left_motor);
 
-        std::cout << "Controller state: " << stateName(controller.state()) << '\n';
-
-        runUntilReached(controller, 150);
-
-        std::cout << "\nPASS: target A reached\n";
-
-        // ============================================================
-        // 5. TEST 2 - latest target wins
-        //
-        // 两次setTarget之间故意不调用update()。
-        // 因此0.18不应该真正发送到硬件。
-        // ============================================================
-        std::cout << "\n====================================\n"
-                  << "[TEST 2] Latest target wins\n"
-                  << "====================================\n";
-
-        controller.setTarget(0.18, kVelocityLimit);
-
-        controller.setTarget(0.10, kVelocityLimit);
-
-        std::cout << "Latest target: " << controller.targetPosition() << " m\n";
-
-        if (controller.targetPosition() != 0.10)
-        {
-            throw std::runtime_error("Latest target was not preserved");
-        }
-
-        std::cout << "PASS: latest target is 0.10 m\n";
-
-        runUntilReached(controller, 150);
-
-        std::cout << "\nPASS: target B reached\n";
+        std::cout
+            << "\nLeft turn finished.\n"
+            << "Robot should now face about 90 degrees left.\n";
 
         // ============================================================
-        // 6. TEST 3 - invalid position
+        // 右转90度，回到原方向
         // ============================================================
-        std::cout << "\n====================================\n"
-                  << "[TEST 3] Invalid position target\n"
-                  << "====================================\n";
+        std::cout
+            << "\n====================================\n"
+            << "RETURN TO ORIGINAL HEADING\n"
+            << "====================================\n";
 
-        try
-        {
-            controller.setTarget(0.50, kVelocityLimit);
+        driveFor(
+            right_motor,
+            left_motor,
+            -kWheelVelocity,
+            +kWheelVelocity,
+            kTurnDurationSeconds);
 
-            throw std::runtime_error("Invalid position was unexpectedly accepted");
-        }
-        catch (const std::out_of_range &error)
-        {
-            std::cout << "PASS: caught expected exception: " << error.what() << '\n';
-        }
+        stopAndWait(
+            right_motor,
+            left_motor);
 
-        if (controller.targetPosition() != 0.10)
-        {
-            throw std::runtime_error("Invalid position changed previous target");
-        }
-
-        std::cout << "PASS: previous target preserved\n";
+        std::cout
+            << "\nRobot should now face approximately "
+            << "the original direction.\n";
 
         // ============================================================
-        // 7. TEST 4 - invalid velocity
+        // 收尾
         // ============================================================
-        std::cout << "\n====================================\n"
-                  << "[TEST 4] Invalid velocity limit\n"
-                  << "====================================\n";
+        right_motor.disable();
+        left_motor.disable();
 
-        try
-        {
-            controller.setTarget(0.20, 0.10); // > YAML max_velocity 0.05
-
-            throw std::runtime_error("Invalid velocity was unexpectedly accepted");
-        }
-        catch (const std::out_of_range &error)
-        {
-            std::cout << "PASS: caught expected exception: " << error.what() << '\n';
-        }
-
-        if (controller.targetPosition() != 0.10 || controller.velocityLimit() != kVelocityLimit)
-        {
-            throw std::runtime_error("Invalid velocity changed previous command");
-        }
-
-        std::cout << "PASS: previous command preserved\n";
-
-        // ============================================================
-        // 8. Hold 3 seconds
-        // ============================================================
-        std::cout << "\n====================================\n"
-                  << "[TEST 5] Hold torso for 3 seconds\n"
-                  << "====================================\n";
-
-        for (int cycle = 1; cycle <= 30; ++cycle)
-        {
-            const auto cycle_start = std::chrono::steady_clock::now();
-
-            controller.update();
-
-            if (cycle % 10 == 0)
-            {
-                std::cout << "\n[hold cycle " << cycle << "]\n";
-
-                printPosition(controller.currentPosition());
-
-                const bool reached = controller.targetReached(kPositionTolerance);
-
-                std::cout << "Target reached: " << (reached ? "yes" : "no") << '\n';
-
-                if (!reached)
-                {
-                    throw std::runtime_error("Torso lost target during hold");
-                }
-            }
-
-            std::this_thread::sleep_until(cycle_start + kControlPeriod);
-        }
-
-        std::cout << "\nPASS: hold test\n";
-
-        // ============================================================
-        // 9. Stop -> Idle
-        // ============================================================
-        std::cout << "\n====================================\n"
-                  << "[TEST 6] Stop controller\n"
-                  << "====================================\n";
-
-        controller.stop();
-
-        std::cout << "Controller state after stop: " << stateName(controller.state()) << '\n';
-
-        if (controller.state() != robot::tiago::TorsoController::ControlState::Idle)
-        {
-            throw std::runtime_error("TorsoController did not return to Idle");
-        }
-
-        std::cout << "PASS: Running -> Idle\n";
-
-        // ============================================================
-        // 10. Disable hardware
-        // ============================================================
-        std::cout << "\nDisable torso\n";
-
-        torso.disable();
-
-        std::cout << "\n====================================\n"
-                  << "TORSO CONTROLLER TEST PASSED\n"
-                  << "====================================\n";
+        std::cout
+            << "\n====================================\n"
+            << "BASE ROTATION TEST FINISHED\n"
+            << "====================================\n";
 
         return 0;
     }
     catch (const std::exception &error)
     {
-        std::cerr << "\n====================================\n"
-                  << "TORSO CONTROLLER TEST FAILED\n"
-                  << "====================================\n"
-                  << error.what() << '\n';
+        std::cerr
+            << "Error: "
+            << error.what()
+            << '\n';
 
         return 1;
     }

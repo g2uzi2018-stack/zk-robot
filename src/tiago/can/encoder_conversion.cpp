@@ -1,5 +1,6 @@
 #include "tiago/can/encoder_conversion.hpp"
 
+#include <limits>
 #include <cmath>
 #include <stdexcept>
 
@@ -114,27 +115,57 @@ namespace robot::tiago
     }
 
     // 将旋转关节速度转换为有符号编码器计数速度。
-    std::int32_t radiansPerSecondToSignedCountsPerSecond(double radians_per_second, const RotaryEncoderConfig &config)
+    std::int32_t radiansPerSecondToSignedCountsPerSecond(
+        double radians_per_second,
+        const RotaryEncoderConfig &config)
     {
+        if (!std::isfinite(radians_per_second))
+        {
+            throw std::invalid_argument(
+                "radians_per_second must be finite");
+        }
+
         if (config.counts_per_motor_revolution == 0)
         {
-            throw std::invalid_argument("counts_per_motor_revolution cannot be zero");
+            throw std::invalid_argument(
+                "counts_per_motor_revolution cannot be zero");
         }
 
         if (config.gear_ratio <= 0.0)
         {
-            throw std::invalid_argument("gear_ratio must be positive");
+            throw std::invalid_argument(
+                "gear_ratio must be positive");
         }
 
-        const double joint_revolutions_per_second = radians_per_second / (2.0 * M_PI);
+        const double joint_revolutions_per_second =
+            radians_per_second / (2.0 * M_PI);
 
-        const double motor_revolutions_per_second = joint_revolutions_per_second * config.gear_ratio;
+        const double motor_revolutions_per_second =
+            joint_revolutions_per_second *
+            config.gear_ratio;
 
-        double counts_per_second = motor_revolutions_per_second * static_cast<double>(config.counts_per_motor_revolution);
+        double counts_per_second =
+            motor_revolutions_per_second *
+            static_cast<double>(
+                config.counts_per_motor_revolution);
 
         counts_per_second *= config.direction;
 
-        return static_cast<std::int32_t>(std::round(counts_per_second));
+        const double rounded =
+            std::round(counts_per_second);
+
+        if (rounded <
+                static_cast<double>(
+                    std::numeric_limits<std::int32_t>::min()) ||
+            rounded >
+                static_cast<double>(
+                    std::numeric_limits<std::int32_t>::max()))
+        {
+            throw std::out_of_range(
+                "Velocity exceeds int32 protocol range");
+        }
+
+        return static_cast<std::int32_t>(rounded);
     }
 
     // 将有符号编码器计数速度转换为旋转关节速度。

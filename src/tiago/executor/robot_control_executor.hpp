@@ -27,8 +27,7 @@ namespace robot::tiago
         using TimePoint = Clock::time_point;
         using Duration = Clock::duration;
 
-        using ArmTrajectory =
-            robot::motion::JointTrajectory<Arm::kJointCount>;
+        using ArmTrajectory = robot::motion::JointTrajectory<Arm::kJointCount>;
 
         // ------------------------------------------------------------
         // Executor 配置
@@ -107,26 +106,19 @@ namespace robot::tiago
 
             std::optional<double> torso_position{};
 
-            ArmController::ControlState left_arm_state{
-                ArmController::ControlState::Idle};
+            ArmController::ControlState left_arm_state{ArmController::ControlState::Idle};
 
-            ArmController::ControlState right_arm_state{
-                ArmController::ControlState::Idle};
+            ArmController::ControlState right_arm_state{ArmController::ControlState::Idle};
 
-            GripperController::ControlState left_gripper_state{
-                GripperController::ControlState::Idle};
+            GripperController::ControlState left_gripper_state{GripperController::ControlState::Idle};
 
-            GripperController::ControlState right_gripper_state{
-                GripperController::ControlState::Idle};
+            GripperController::ControlState right_gripper_state{GripperController::ControlState::Idle};
 
-            HeadController::ControlState head_state{
-                HeadController::ControlState::Idle};
+            HeadController::ControlState head_state{HeadController::ControlState::Idle};
 
-            TorsoController::ControlState torso_state{
-                TorsoController::ControlState::Idle};
+            TorsoController::ControlState torso_state{TorsoController::ControlState::Idle};
 
-            BaseController::ControlState base_state{
-                BaseController::ControlState::Idle};
+            BaseController::ControlState base_state{BaseController::ControlState::Idle};
 
             // Base 当前暂时没有里程计和真实车体位姿，
             // 因此这里只记录当前执行目标。
@@ -193,29 +185,17 @@ namespace robot::tiago
         // latest target wins。
         // ------------------------------------------------------------
 
-        void setLeftArmTarget(
-            const Arm::JointValues &positions,
-            const Arm::JointValues &velocity_limits);
+        void setLeftArmTarget(const Arm::JointValues &positions, const Arm::JointValues &velocity_limits);
 
-        void setRightArmTarget(
-            const Arm::JointValues &positions,
-            const Arm::JointValues &velocity_limits);
+        void setRightArmTarget(const Arm::JointValues &positions, const Arm::JointValues &velocity_limits);
 
-        void setLeftGripperTarget(
-            const Gripper::FingerValues &positions,
-            const Gripper::FingerValues &velocity_limits);
+        void setLeftGripperTarget(const Gripper::FingerValues &positions, const Gripper::FingerValues &velocity_limits);
 
-        void setRightGripperTarget(
-            const Gripper::FingerValues &positions,
-            const Gripper::FingerValues &velocity_limits);
+        void setRightGripperTarget(const Gripper::FingerValues &positions, const Gripper::FingerValues &velocity_limits);
 
-        void setHeadTarget(
-            const Head::JointValues &positions,
-            const Head::JointValues &velocity_limits);
+        void setHeadTarget(const Head::JointValues &positions, const Head::JointValues &velocity_limits);
 
-        void setTorsoTarget(
-            double position,
-            double velocity_limit);
+        void setTorsoTarget(double position, double velocity_limit);
 
         // ------------------------------------------------------------
         // Base 流式速度目标
@@ -227,9 +207,7 @@ namespace robot::tiago
         // Executor 会自动将目标置为 0。
         // ------------------------------------------------------------
 
-        void setBaseVelocity(
-            double linear_velocity,
-            double angular_velocity);
+        void setBaseVelocity(double linear_velocity, double angular_velocity);
 
         // ------------------------------------------------------------
         // 轨迹提交
@@ -246,14 +224,10 @@ namespace robot::tiago
         // ------------------------------------------------------------
 
         // 提交左臂轨迹；轨迹由 Executor 在线程内按控制周期采样。
-        void submitLeftArmTrajectory(
-            std::shared_ptr<const ArmTrajectory> trajectory,
-            const Arm::JointValues &velocity_limits);
+        void submitLeftArmTrajectory(std::shared_ptr<const ArmTrajectory> trajectory, const Arm::JointValues &velocity_limits);
 
         // 提交右臂轨迹；轨迹由 Executor 在线程内按控制周期采样。
-        void submitRightArmTrajectory(
-            std::shared_ptr<const ArmTrajectory> trajectory,
-            const Arm::JointValues &velocity_limits);
+        void submitRightArmTrajectory(std::shared_ptr<const ArmTrajectory> trajectory, const Arm::JointValues &velocity_limits);
 
         // ------------------------------------------------------------
         // 运动控制
@@ -388,9 +362,7 @@ namespace robot::tiago
         PendingCommands takePendingCommands();
 
         // 将本周期新命令应用到内部执行状态。
-        void applyPendingCommands(
-            PendingCommands commands,
-            TimePoint now);
+        void applyPendingCommands(PendingCommands commands, TimePoint now);
 
         // 当前已有 trajectory 在本周期取样。
         void sampleActiveTrajectories(TimePoint now);
@@ -406,9 +378,7 @@ namespace robot::tiago
         void publishRobotState(TimePoint now);
 
         // 进入机器人级故障状态。
-        void enterFault(
-            const char *source,
-            const std::exception &error) noexcept;
+        void enterFault(const char *source, const std::exception &error) noexcept;
 
         // ------------------------------------------------------------
         // Controller helper
@@ -419,23 +389,15 @@ namespace robot::tiago
         // Failed -> fault propagation
         // ------------------------------------------------------------
 
-        void applyArmTarget(
-            ArmController &controller,
-            const ArmTarget &target);
+        void applyArmTarget(ArmController &controller, const ArmTarget &target);
 
-        void applyGripperTarget(
-            GripperController &controller,
-            const GripperTarget &target);
+        void applyGripperTarget(GripperController &controller, const GripperTarget &target);
 
-        void applyHeadTarget(
-            const HeadTarget &target);
+        void applyHeadTarget(const HeadTarget &target);
 
-        void applyTorsoTarget(
-            const TorsoTarget &target);
+        void applyTorsoTarget(const TorsoTarget &target);
 
-        void applyBaseVelocity(
-            double linear_velocity,
-            double angular_velocity);
+        void applyBaseVelocity(double linear_velocity, double angular_velocity);
 
         // ------------------------------------------------------------
         // 运动语义

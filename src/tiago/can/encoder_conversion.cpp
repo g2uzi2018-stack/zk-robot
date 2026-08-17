@@ -115,26 +115,21 @@ namespace robot::tiago
     }
 
     // 将旋转关节速度转换为有符号编码器计数速度。
-    std::int32_t radiansPerSecondToSignedCountsPerSecond(
-        double radians_per_second,
-        const RotaryEncoderConfig &config)
+    std::int32_t radiansPerSecondToSignedCountsPerSecond(double radians_per_second, const RotaryEncoderConfig &config)
     {
         if (!std::isfinite(radians_per_second))
         {
-            throw std::invalid_argument(
-                "radians_per_second must be finite");
+            throw std::invalid_argument("radians_per_second must be finite");
         }
 
         if (config.counts_per_motor_revolution == 0)
         {
-            throw std::invalid_argument(
-                "counts_per_motor_revolution cannot be zero");
+            throw std::invalid_argument("counts_per_motor_revolution cannot be zero");
         }
 
         if (config.gear_ratio <= 0.0)
         {
-            throw std::invalid_argument(
-                "gear_ratio must be positive");
+            throw std::invalid_argument("gear_ratio must be positive");
         }
 
         const double joint_revolutions_per_second =
@@ -158,8 +153,7 @@ namespace robot::tiago
                 static_cast<double>(
                     std::numeric_limits<std::int32_t>::max()))
         {
-            throw std::out_of_range(
-                "Velocity exceeds int32 protocol range");
+            throw std::out_of_range("Velocity exceeds int32 protocol range");
         }
 
         return static_cast<std::int32_t>(rounded);

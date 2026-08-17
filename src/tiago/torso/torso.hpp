@@ -50,8 +50,7 @@ namespace robot::tiago
         const Joint &joint() const;
 
     private:
-        static const JointConfig &
-        validateConfig(const CanBusConfig &config);
+        static const JointConfig &validateConfig(const CanBusConfig &config);
 
         // 必须先于 joint_ 构造。
         CanBus bus_;

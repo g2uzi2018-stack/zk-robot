@@ -143,14 +143,11 @@ namespace robot::tiago
         const double motor_revolutions_per_second =
             joint_revolutions_per_second *
             config.gear_ratio;
-
         double counts_per_second =
             motor_revolutions_per_second *
             static_cast<double>(
                 config.counts_per_motor_revolution);
-
         counts_per_second *= config.direction;
-
         const double rounded =
             std::round(counts_per_second);
 
@@ -182,13 +179,9 @@ namespace robot::tiago
         }
 
         const double motor_revolutions_per_second = static_cast<double>(counts_per_second) / static_cast<double>(config.counts_per_motor_revolution);
-
         const double joint_revolutions_per_second = motor_revolutions_per_second / config.gear_ratio;
-
         double radians_per_second = joint_revolutions_per_second * 2.0 * M_PI;
-
         radians_per_second *= config.direction;
-
         return radians_per_second;
     }
 }

@@ -15,6 +15,7 @@ namespace robot::tiago
             Failed
         };
 
+        // 使用外部已经存在的 Base 创建控制器。
         explicit BaseController(Base &base);
 
         // Idle -> Running，并将初始目标设为静止。
@@ -32,8 +33,13 @@ namespace robot::tiago
         // Running 状态周期发送最新目标；Idle / Failed 状态不发送命令。
         void update();
 
+        // 获取当前控制器状态。
         ControlState state() const noexcept;
+
+        // 获取当前保存的线速度目标，单位为 m/s。
         double linearVelocityTarget() const noexcept;
+
+        // 获取当前保存的角速度目标，单位为 rad/s。
         double angularVelocityTarget() const noexcept;
 
     private:

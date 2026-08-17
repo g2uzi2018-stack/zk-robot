@@ -17,7 +17,6 @@ namespace robot::tiago
     void CanMotor::enable()
     {
         const auto frame = encodeControlCommand(config_.node_id, MotorControlCommand::Enable);
-
         bus_.send(frame);
     }
 
@@ -25,7 +24,6 @@ namespace robot::tiago
     void CanMotor::disable()
     {
         const auto frame = encodeControlCommand(config_.node_id, MotorControlCommand::Disable);
-
         bus_.send(frame);
     }
 
@@ -33,7 +31,6 @@ namespace robot::tiago
     void CanMotor::clearFault()
     {
         const auto frame = encodeControlCommand(config_.node_id, MotorControlCommand::ClearFault);
-
         bus_.send(frame);
     }
 
@@ -41,7 +38,6 @@ namespace robot::tiago
     void CanMotor::stop()
     {
         const auto frame = encodeControlCommand(config_.node_id, MotorControlCommand::Stop);
-
         bus_.send(frame);
     }
 
@@ -76,7 +72,6 @@ namespace robot::tiago
     void CanMotor::commandPosition(double position, double velocity_limit)
     {
         std::int32_t position_counts{};
-
         std::uint16_t velocity_limit_counts{};
 
         // 旋转电机。
@@ -100,7 +95,6 @@ namespace robot::tiago
         }
 
         const auto frame = encodePositionCommand(config_.node_id, position_counts, velocity_limit_counts);
-
         bus_.send(frame);
     }
 
@@ -128,6 +122,7 @@ namespace robot::tiago
 
         return countsToMeters(feedback->position_counts, encoder);
     }
+
     // 发送旋转电机的速度控制命令。
     void CanMotor::commandVelocity(double velocity)
     {

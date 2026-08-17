@@ -131,7 +131,6 @@ namespace
         result.motor = parseMotor(node, context);
         return result;
     }
-
 }
 
 namespace robot::tiago

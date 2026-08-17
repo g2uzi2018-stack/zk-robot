@@ -10,11 +10,19 @@ namespace robot::tiago
     class Base
     {
     public:
+        // 使用底盘配置创建对象，并建立左右轮共享的 CAN 总线。
         explicit Base(const BaseConfig &config);
 
+        // 使能左右轮电机。
         void enable();
+
+        // 禁用左右轮电机。
         void disable();
+
+        // 清除左右轮电机故障。
         void clearFault();
+
+        // 停止左右轮运动。
         void stop();
 
         // linear_velocity 单位为 m/s；angular_velocity 单位为 rad/s。

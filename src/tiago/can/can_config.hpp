@@ -18,8 +18,11 @@ namespace robot::tiago
     // 关节的机械位置范围和最大速度。
     struct JointLimits
     {
+        // 允许的最小位置，单位由关节类型决定。
         double min_position{0.0};
+        // 允许的最大位置，单位由关节类型决定。
         double max_position{0.0};
+        // 允许的最大速度，单位由关节类型决定。
         double max_velocity{0.0};
     };
 

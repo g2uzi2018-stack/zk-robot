@@ -165,15 +165,14 @@ namespace robot::tiago
         return feedback;
     }
 
+    // 编码速度控制命令帧。
     can::CanFrame encodeVelocityCommand(std::uint16_t node_id, std::int32_t target_velocity_counts_per_second)
     {
         validateNodeId(node_id);
 
         can::CanFrame frame;
         frame.id = static_cast<std::uint16_t>(kCommandIdBase + node_id);
-
         frame.data_length = kProtocolDataLength;
-
         writeInt32LittleEndian(frame.data, 0, target_velocity_counts_per_second);
 
         // byte 4..5 对 velocity command 不使用，

@@ -30,6 +30,7 @@ add_executable(robot
     src/tiago/base/base.cpp
     src/tiago/controller/base_controller.cpp
     src/tiago/executor/robot_control_executor.cpp
+    src/tiago/executor/robot_control_executor_arm.cpp
 )
 
 target_include_directories(robot PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)

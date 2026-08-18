@@ -1,5 +1,7 @@
 #pragma once
 
+#include "common/logger.hpp"
+
 #include "motion/trajectory/joint_trajectory.hpp"
 
 #include "tiago/controller/arm_controller.hpp"
@@ -18,6 +20,7 @@
 
 namespace robot::tiago
 {
+
     class RobotControlExecutor
     {
     public:
@@ -25,13 +28,16 @@ namespace robot::tiago
         using TimePoint = Clock::time_point;
         using Duration = Clock::duration;
 
-        using ArmTrajectory = robot::motion::JointTrajectory<Arm::kJointCount>;
+        using ArmTrajectory =
+            robot::motion::JointTrajectory<Arm::kJointCount>;
 
         struct Config
         {
             Duration control_period;
 
-            // 用于 Servo / Base velocity 等持续输入。
+            // 连续命令超时：
+            // servo target
+            // base velocity
             Duration command_timeout;
         };
 
@@ -42,12 +48,23 @@ namespace robot::tiago
             Faulted
         };
 
+        // Executor负责的目标来源模式。
+        //
+        // Trajectory:
+        //   来自已经生成好的JointTrajectory
+        //
+        // Servo:
+        //   来自实时关节目标输入
         enum class ArmControlMode
         {
             Trajectory,
             Servo
         };
 
+        // 当前运动状态。
+        //
+        // 注意：
+        // Holding不是控制模式。
         enum class ArmMotionState
         {
             Inactive,
@@ -55,85 +72,112 @@ namespace robot::tiago
             Holding
         };
 
+        struct CycleStatistics
+        {
+            uint64_t cycle_count{0};
+
+            Duration last_execution_time{};
+
+            Duration max_execution_time{};
+
+            uint64_t deadline_miss_count{0};
+        };
+
         struct RobotState
         {
             TimePoint timestamp{};
 
             Arm::JointPositions left_arm_positions{};
+
             Arm::JointPositions right_arm_positions{};
 
             Gripper::FingerPositions left_gripper_positions{};
+
             Gripper::FingerPositions right_gripper_positions{};
 
             Head::JointPositions head_positions{};
 
             std::optional<double> torso_position{};
 
-            ArmController::ControlState left_arm_state{ArmController::ControlState::Idle};
+            ArmController::ControlState left_arm_state{
+                ArmController::ControlState::Idle};
 
-            ArmController::ControlState right_arm_state{ArmController::ControlState::Idle};
+            ArmController::ControlState right_arm_state{
+                ArmController::ControlState::Idle};
 
-            BaseController::ControlState base_state{BaseController::ControlState::Idle};
+            BaseController::ControlState base_state{
+                BaseController::ControlState::Idle};
         };
 
+    public:
         RobotControlExecutor(
             ArmController &left_arm,
             ArmController &right_arm,
+
             GripperController &left_gripper,
             GripperController &right_gripper,
+
             HeadController &head,
             TorsoController &torso,
+
             BaseController &base,
-            BaseController &base,
+
             Config config);
 
         ~RobotControlExecutor();
 
-        RobotControlExecutor(const RobotControlExecutor &) = delete;
-        RobotControlExecutor &operator=(const RobotControlExecutor &) = delete;
+        RobotControlExecutor(
+            const RobotControlExecutor &) = delete;
 
+        RobotControlExecutor &operator=(
+            const RobotControlExecutor &) = delete;
+
+    public:
         void start();
 
         void shutdown();
 
         State state() const noexcept;
 
-        // =========================
+    public:
+        // ============================
         // Arm mode
-        // =========================
+        // ============================
 
-        void setLeftArmControlMode(ArmControlMode mode);
-
-        void setRightArmControlMode(ArmControlMode mode);
-
-        // =========================
-        // Arm trajectory mode
+        // 模式切换通过Executor线程生效。
         //
-        // 当前必须处于 Trajectory 模式
-        // =========================
+        // 不直接修改运行状态。
+        void setLeftArmControlMode(
+            ArmControlMode mode);
 
-        void submitLeftArmTrajectory(std::shared_ptr<const ArmTrajectory> trajectory);
+        void setRightArmControlMode(
+            ArmControlMode mode);
 
-        void submitRightArmTrajectory(std::shared_ptr<const ArmTrajectory> trajectory);
+    public:
+        // ============================
+        // Trajectory
+        // ============================
 
-        // =========================
-        // Arm servo mode
-        //
-        // 当前必须处于 Servo 模式
-        //
-        // 典型用途:
-        // - 外骨骼遥操作
-        // - 实时关节跟踪
-        // =========================
+        void submitLeftArmTrajectory(
+            std::shared_ptr<const ArmTrajectory> trajectory);
 
-        void setLeftArmServoTarget(const Arm::JointValues &positions, const Arm::JointValues &velocity_limits);
+        void submitRightArmTrajectory(
+            std::shared_ptr<const ArmTrajectory> trajectory);
 
-        void setRightArmServoTarget(const Arm::JointValues &positions, const Arm::JointValues &velocity_limits);
+    public:
+        // ============================
+        // Servo
+        // ============================
 
-        // =========================
-        // Motion control
-        // =========================
+        void setLeftArmServoTarget(
+            const Arm::JointValues &positions,
+            const Arm::JointValues &velocity_limits);
 
+        void setRightArmServoTarget(
+            const Arm::JointValues &positions,
+            const Arm::JointValues &velocity_limits);
+
+    public:
         void holdLeftArm();
 
         void holdRightArm();
@@ -142,82 +186,96 @@ namespace robot::tiago
 
         void stopRightArm();
 
-        // =========================
-        // Other components
-        // =========================
+    public:
+        void setLeftGripperTarget(
+            const Gripper::FingerValues &positions,
+            const Gripper::FingerValues &velocity_limits);
 
-        void setLeftGripperTarget(const Gripper::FingerValues &positions, const Gripper::FingerValues &velocity_limits);
+        void setRightGripperTarget(
+            const Gripper::FingerValues &positions,
+            const Gripper::FingerValues &velocity_limits);
 
-        void setRightGripperTarget(const Gripper::FingerValues &positions, const Gripper::FingerValues &velocity_limits);
+        void setHeadTarget(
+            const Head::JointValues &positions,
+            const Head::JointValues &velocity_limits);
 
-        void setHeadTarget(const Head::JointValues &positions, const Head::JointValues &velocity_limits);
+        void setTorsoTarget(
+            double position,
+            double velocity_limit);
 
-        void setTorsoTarget(double position, double velocity_limit);
+        void setBaseVelocity(
+            double linear_velocity,
+            double angular_velocity);
 
-        void setBaseVelocity(double linear_velocity, double angular_velocity);
-
-        // =========================
-        // State
-        // =========================
-
+    public:
         RobotState latestState() const;
+
+        CycleStatistics statistics() const;
+
+        std::string faultMessage() const;
 
     private:
         struct ArmTarget
         {
             Arm::JointValues positions{};
+
             Arm::JointValues velocity_limits{};
-        };
-
-        struct ActiveTrajectory
-        {
-            std::shared_ptr<const ArmTrajectory> trajectory;
-
-            TimePoint start_time{};
         };
 
         struct ArmRuntime
         {
-            ArmControlMode mode{ArmControlMode::Trajectory};
+            ArmControlMode mode{
+                ArmControlMode::Trajectory};
 
-            ArmMotionState state{ArmMotionState::Inactive};
+            ArmMotionState state{
+                ArmMotionState::Inactive};
 
-            std::shared_ptr<const ArmTrajectory> active_trajectory;
+            std::shared_ptr<const ArmTrajectory>
+                active_trajectory;
 
             TimePoint trajectory_start_time{};
 
-            std::optional<ArmTarget> servo_target;
+            std::optional<ArmTarget>
+                servo_target;
 
-            std::optional<ArmTarget> hold_target;
+            std::optional<ArmTarget>
+                hold_target;
         };
 
     private:
         void controlLoop();
 
-        void runCycle(TimePoint now);
+        void runCycle(
+            TimePoint now);
+
+        void processCommands();
+
+        void sampleTrajectory(
+            TimePoint now);
 
         void updateControllers();
 
-        void sampleTrajectories(TimePoint now);
+        void publishState(
+            TimePoint now);
 
-        void publishState(TimePoint now);
+        void checkDeadline(
+            TimePoint start,
+            TimePoint end);
 
-        void checkCommandTimeout(TimePoint now);
-
-        void applyLeftArmTarget(const ArmTarget &target);
-
-        void applyRightArmTarget(const ArmTarget &target);
-
-        void enterFault(const std::string &reason);
+        void enterFault(
+            const std::string &reason);
 
     private:
         ArmController &left_arm_;
+
         ArmController &right_arm_;
 
         GripperController &left_gripper_;
+
         GripperController &right_gripper_;
 
         HeadController &head_;
+
         TorsoController &torso_;
 
         BaseController &base_;
@@ -226,28 +284,51 @@ namespace robot::tiago
 
         std::thread control_thread_;
 
-        std::atomic<bool> shutdown_requested_{false};
+        std::atomic<bool>
+            shutdown_requested_{false};
 
-        std::atomic<State> state_{State::Stopped};
+        std::atomic<State>
+            state_{State::Stopped};
 
-        // 外部命令缓存
+    private:
+        // 外部线程提交命令。
+        //
+        // Executor线程负责消费。
         mutable std::mutex command_mutex_;
 
-        std::optional<ArmTarget> pending_left_servo_target_;
+        std::optional<ArmControlMode>
+            pending_left_arm_mode_;
 
-        std::optional<ArmTarget> pending_right_servo_target_;
+        std::optional<ArmControlMode>
+            pending_right_arm_mode_;
 
-        std::shared_ptr<const ArmTrajectory> pending_left_trajectory_;
+        std::optional<ArmTarget>
+            pending_left_servo_target_;
 
-        std::shared_ptr<const ArmTrajectory> pending_right_trajectory_;
+        std::optional<ArmTarget>
+            pending_right_servo_target_;
 
+        std::shared_ptr<const ArmTrajectory>
+            pending_left_trajectory_;
+
+        std::shared_ptr<const ArmTrajectory>
+            pending_right_trajectory_;
+
+    private:
         ArmRuntime left_arm_runtime_;
 
         ArmRuntime right_arm_runtime_;
 
+    private:
         mutable std::mutex state_mutex_;
 
         RobotState robot_state_{};
+
+        mutable std::mutex statistics_mutex_;
+
+        CycleStatistics statistics_{};
+
+        mutable std::mutex fault_mutex_;
 
         std::string fault_message_;
     };

@@ -6,6 +6,7 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+find_package(spdlog REQUIRED)
 find_package(yaml-cpp REQUIRED)
 
 add_executable(robot
@@ -28,8 +29,9 @@ add_executable(robot
     src/tiago/base/base_config.cpp
     src/tiago/base/base.cpp
     src/tiago/controller/base_controller.cpp
+    src/tiago/executor/robot_control_executor.cpp
 )
 
 target_include_directories(robot PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 
-target_link_libraries(robot PRIVATE yaml-cpp)
+target_link_libraries(robot PRIVATE yaml-cpp spdlog::spdlog fmt::fmt)

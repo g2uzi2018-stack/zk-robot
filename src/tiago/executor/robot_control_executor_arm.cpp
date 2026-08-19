@@ -27,52 +27,53 @@ namespace robot::tiago
     // Arm trajectory mailbox
     // ============================================================
 
-    void RobotControlExecutor::submitLeftArmTrajectory(std::shared_ptr<const ArmTrajectory> trajectory)
+    void RobotControlExecutor::submitLeftArmTrajectory(std::shared_ptr<const ArmTrajectory> trajectory,
+                                                       const Arm::JointValues &velocity_limits)
     {
         if (!trajectory)
         {
             throw std::invalid_argument("Left trajectory is null");
         }
-
         std::lock_guard<std::mutex> lock(command_mutex_);
         auto &mailbox = command_mailbox_.left_arm;
+
         // Hold / Stop 已经等待处理时，
-        // 不允许新的运动命令覆盖动作请求。
+        // 不允许普通运动命令覆盖安全动作。
         if (mailbox.action)
         {
             throw std::logic_error("Left arm hold/stop command is pending");
         }
 
-        // 同一个 mailbox 周期中，
-        // 不允许同时出现 Servo 和 Trajectory。
+        // 同一批 mailbox 中，
+        // 不允许同时提交 Servo 和 Trajectory。
         if (mailbox.servo_target)
         {
             throw std::logic_error("Left arm has pending servo command");
         }
 
-        mailbox.trajectory = std::move(trajectory);
+        // 新 trajectory 覆盖尚未被 Executor
+        // 消费的旧 trajectory。
+        mailbox.trajectory = ArmTrajectoryCommand{std::move(trajectory), velocity_limits};
     }
 
-    void RobotControlExecutor::submitRightArmTrajectory(std::shared_ptr<const ArmTrajectory> trajectory)
+    void RobotControlExecutor::submitRightArmTrajectory(std::shared_ptr<const ArmTrajectory> trajectory,
+                                                        const Arm::JointValues &velocity_limits)
     {
         if (!trajectory)
         {
             throw std::invalid_argument("Right trajectory is null");
         }
-
         std::lock_guard<std::mutex> lock(command_mutex_);
         auto &mailbox = command_mailbox_.right_arm;
         if (mailbox.action)
         {
             throw std::logic_error("Right arm hold/stop command is pending");
         }
-
         if (mailbox.servo_target)
         {
             throw std::logic_error("Right arm has pending servo command");
         }
-
-        mailbox.trajectory = std::move(trajectory);
+        mailbox.trajectory = ArmTrajectoryCommand{std::move(trajectory), velocity_limits};
     }
 
     // ============================================================
@@ -88,16 +89,12 @@ namespace robot::tiago
         {
             throw std::logic_error("Left arm hold/stop command is pending");
         }
-
         if (mailbox.trajectory)
         {
             throw std::logic_error("Left arm has pending trajectory");
         }
 
-        // Servo 使用 latest target wins。
-        //
-        // 如果 Executor 还没有消费上一次 Servo target，
-        // 新目标直接覆盖旧目标。
+        // Servo latest target wins。
         mailbox.servo_target = ArmTarget{positions, velocity_limits};
     }
 
@@ -110,12 +107,10 @@ namespace robot::tiago
         {
             throw std::logic_error("Right arm hold/stop command is pending");
         }
-
         if (mailbox.trajectory)
         {
             throw std::logic_error("Right arm has pending trajectory");
         }
-
         mailbox.servo_target = ArmTarget{positions, velocity_limits};
     }
 
@@ -127,9 +122,9 @@ namespace robot::tiago
     {
         std::lock_guard<std::mutex> lock(command_mutex_);
         auto &mailbox = command_mailbox_.left_arm;
-        // public API 只提交 Hold 请求。
         mailbox.action = ArmAction::Hold;
-        // 尚未被 Executor 消费的旧运动命令失效。
+
+        // 尚未消费的普通运动命令失效。
         mailbox.trajectory.reset();
         mailbox.servo_target.reset();
     }
@@ -147,12 +142,6 @@ namespace robot::tiago
     {
         std::lock_guard<std::mutex> lock(command_mutex_);
         auto &mailbox = command_mailbox_.left_arm;
-        // 注意：
-        //
-        // 这里不调用 left_arm_.stop()。
-        //
-        // 真正的 Controller::stop()
-        // 只能由 Executor 控制线程执行。
         mailbox.action = ArmAction::Stop;
         mailbox.trajectory.reset();
         mailbox.servo_target.reset();
@@ -177,17 +166,27 @@ namespace robot::tiago
         // 1. Mode
         // --------------------------------------------------------
 
-        if (commands.mode)
+        if (commands.mode && *commands.mode != left_arm_runtime_.mode)
         {
             left_arm_runtime_.mode = *commands.mode;
-            robot::common::logger()->info("Left arm mode changed");
-            // TODO:
+
+            // 模式切换必须清除旧运动 source。
             //
-            // 当前只是修改 mode。
+            // Trajectory -> Servo:
+            //   清除旧 trajectory。
             //
-            // 后续需要正式实现：
-            // Trajectory <-> Servo 切换时
-            // 清理旧 active source。
+            // Servo -> Trajectory:
+            //   清除旧 servo target。
+            left_arm_runtime_.active_trajectory.reset();
+            left_arm_runtime_.servo_target.reset();
+
+            // 切换 mode 本身不解除显式 Hold。
+            if (left_arm_runtime_.state != ArmMotionState::Holding)
+            {
+                left_arm_runtime_.hold_target.reset();
+                left_arm_runtime_.state = ArmMotionState::Inactive;
+            }
+            robot::common::logger()->info("Left arm control mode changed");
         }
 
         // --------------------------------------------------------
@@ -205,10 +204,7 @@ namespace robot::tiago
                 applyLeftArmStop();
             }
 
-            // Hold / Stop 本周期优先。
-            //
-            // 动作执行后不再继续处理
-            // 本批次中的运动命令。
+            // 本周期 Hold / Stop 优先。
             return;
         }
 
@@ -222,10 +218,14 @@ namespace robot::tiago
             {
                 throw std::logic_error("Left arm is not in trajectory mode");
             }
+            const auto velocity_limits = commands.trajectory->velocity_limits;
+            auto trajectory = std::move(commands.trajectory->trajectory);
+            left_arm_runtime_.active_trajectory =
+                ActiveArmTrajectory{std::move(trajectory), velocity_limits, Clock::now()};
 
-            left_arm_runtime_.active_trajectory = std::move(commands.trajectory);
+            // 新 trajectory 成为唯一运动 source。
+            left_arm_runtime_.servo_target.reset();
             left_arm_runtime_.hold_target.reset();
-            left_arm_runtime_.trajectory_start_time = Clock::now();
             left_arm_runtime_.state = ArmMotionState::Running;
             robot::common::logger()->info("Left trajectory activated");
         }
@@ -240,8 +240,10 @@ namespace robot::tiago
             {
                 throw std::logic_error("Left arm is not in servo mode");
             }
-
             left_arm_runtime_.servo_target = std::move(commands.servo_target);
+
+            // Servo 成为唯一运动 source。
+            left_arm_runtime_.active_trajectory.reset();
             left_arm_runtime_.hold_target.reset();
             left_arm_runtime_.state = ArmMotionState::Running;
         }
@@ -257,14 +259,17 @@ namespace robot::tiago
         // 1. Mode
         // --------------------------------------------------------
 
-        if (commands.mode)
+        if (commands.mode && *commands.mode != right_arm_runtime_.mode)
         {
             right_arm_runtime_.mode = *commands.mode;
-            robot::common::logger()->info("Right arm mode changed");
-            // TODO:
-            //
-            // 后续正式处理模式切换时
-            // 清除旧 active source。
+            right_arm_runtime_.active_trajectory.reset();
+            right_arm_runtime_.servo_target.reset();
+            if (right_arm_runtime_.state != ArmMotionState::Holding)
+            {
+                right_arm_runtime_.hold_target.reset();
+                right_arm_runtime_.state = ArmMotionState::Inactive;
+            }
+            robot::common::logger()->info("Right arm control mode changed");
         }
 
         // --------------------------------------------------------
@@ -281,7 +286,6 @@ namespace robot::tiago
             {
                 applyRightArmStop();
             }
-
             return;
         }
 
@@ -295,10 +299,12 @@ namespace robot::tiago
             {
                 throw std::logic_error("Right arm is not in trajectory mode");
             }
-
-            right_arm_runtime_.active_trajectory = std::move(commands.trajectory);
+            const auto velocity_limits = commands.trajectory->velocity_limits;
+            auto trajectory = std::move(commands.trajectory->trajectory);
+            right_arm_runtime_.active_trajectory =
+                ActiveArmTrajectory{std::move(trajectory), velocity_limits, Clock::now()};
+            right_arm_runtime_.servo_target.reset();
             right_arm_runtime_.hold_target.reset();
-            right_arm_runtime_.trajectory_start_time = Clock::now();
             right_arm_runtime_.state = ArmMotionState::Running;
             robot::common::logger()->info("Right trajectory activated");
         }
@@ -313,8 +319,8 @@ namespace robot::tiago
             {
                 throw std::logic_error("Right arm is not in servo mode");
             }
-
             right_arm_runtime_.servo_target = std::move(commands.servo_target);
+            right_arm_runtime_.active_trajectory.reset();
             right_arm_runtime_.hold_target.reset();
             right_arm_runtime_.state = ArmMotionState::Running;
         }
@@ -323,15 +329,6 @@ namespace robot::tiago
     // ============================================================
     // Actual Hold
     // ============================================================
-    //
-    // Hold 语义：
-    //
-    // 1. 停止原来的 Trajectory / Servo 目标来源。
-    // 2. 获取最近一次真实位置反馈。
-    // 3. 把当前位置设为 Controller 新目标。
-    // 4. Controller 继续保持 Running。
-    // 5. Controller::update() 后续持续刷新该位置。
-    // ============================================================
 
     void RobotControlExecutor::applyLeftArmHold()
     {
@@ -339,9 +336,6 @@ namespace robot::tiago
         {
             throw std::runtime_error("Cannot hold left arm: controller is Failed");
         }
-
-        // Idle 状态没有正在运行的位置 Controller，
-        // 因此不能进入真正的 Holding。
         if (left_arm_.state() == ArmController::ControlState::Idle)
         {
             left_arm_runtime_.active_trajectory.reset();
@@ -351,9 +345,6 @@ namespace robot::tiago
             robot::common::logger()->warn("Left arm hold ignored because controller is Idle");
             return;
         }
-
-        // 使用 Controller 最近一次 update()
-        // 保存的真实反馈位置。
         const auto &current_positions = left_arm_.currentPositions();
         Arm::JointValues hold_positions{};
         for (std::size_t i = 0; i < Arm::kJointCount; ++i)
@@ -362,17 +353,14 @@ namespace robot::tiago
             {
                 throw std::runtime_error("Cannot hold left arm: joint feedback unavailable");
             }
-
             hold_positions[i] = *current_positions[i];
         }
 
-        ArmTarget hold_target{hold_positions, left_arm_.velocityLimits()};
-        // 真正修改 Controller。
+        // Hold 继续使用 Controller 当前已有速度限制。
         //
-        // 此处已经处于 Executor 控制线程，
-        // 因此不会由外部线程直接修改 Controller。
+        // Hold 的重点是把目标位置改成当前位置。
+        ArmTarget hold_target{hold_positions, left_arm_.velocityLimits()};
         left_arm_.setTarget(hold_target.positions, hold_target.velocity_limits);
-        // 原来的目标来源全部失效。
         left_arm_runtime_.active_trajectory.reset();
         left_arm_runtime_.servo_target.reset();
         left_arm_runtime_.hold_target = hold_target;
@@ -386,7 +374,6 @@ namespace robot::tiago
         {
             throw std::runtime_error("Cannot hold right arm: controller is Failed");
         }
-
         if (right_arm_.state() == ArmController::ControlState::Idle)
         {
             right_arm_runtime_.active_trajectory.reset();
@@ -396,7 +383,6 @@ namespace robot::tiago
             robot::common::logger()->warn("Right arm hold ignored because controller is Idle");
             return;
         }
-
         const auto &current_positions = right_arm_.currentPositions();
         Arm::JointValues hold_positions{};
         for (std::size_t i = 0; i < Arm::kJointCount; ++i)
@@ -405,10 +391,8 @@ namespace robot::tiago
             {
                 throw std::runtime_error("Cannot hold right arm: joint feedback unavailable");
             }
-
             hold_positions[i] = *current_positions[i];
         }
-
         ArmTarget hold_target{hold_positions, right_arm_.velocityLimits()};
         right_arm_.setTarget(hold_target.positions, hold_target.velocity_limits);
         right_arm_runtime_.active_trajectory.reset();
@@ -421,17 +405,6 @@ namespace robot::tiago
     // ============================================================
     // Actual Stop
     // ============================================================
-    //
-    // Stop 与 Hold 不同：
-    //
-    // Hold:
-    //   Controller 仍然 Running。
-    //   持续位置控制。
-    //
-    // Stop:
-    //   Controller::stop()。
-    //   Controller 回到 Idle。
-    // ============================================================
 
     void RobotControlExecutor::applyLeftArmStop()
     {
@@ -439,17 +412,10 @@ namespace robot::tiago
         {
             throw std::runtime_error("Cannot stop left arm: controller is Failed");
         }
-
-        // ArmController::stop()
-        // 只允许 Running -> Idle。
-        //
-        // 如果已经 Idle，
-        // Executor 将重复 Stop 视为无操作。
         if (left_arm_.state() == ArmController::ControlState::Running)
         {
             left_arm_.stop();
         }
-
         left_arm_runtime_.active_trajectory.reset();
         left_arm_runtime_.servo_target.reset();
         left_arm_runtime_.hold_target.reset();
@@ -463,12 +429,10 @@ namespace robot::tiago
         {
             throw std::runtime_error("Cannot stop right arm: controller is Failed");
         }
-
         if (right_arm_.state() == ArmController::ControlState::Running)
         {
             right_arm_.stop();
         }
-
         right_arm_runtime_.active_trajectory.reset();
         right_arm_runtime_.servo_target.reset();
         right_arm_runtime_.hold_target.reset();
@@ -479,98 +443,88 @@ namespace robot::tiago
     // ============================================================
     // Arm target update
     // ============================================================
-    //
-    // 这个函数以前叫 sampleTrajectory()。
-    //
-    // 但它实际上同时处理：
-    // - Trajectory
-    // - Servo
-    //
-    // 所以改名为 updateArmTargets()。
-    // ============================================================
 
     void RobotControlExecutor::updateArmTargets(TimePoint now)
     {
         // ========================================================
-        // Left trajectory
+        // Left Arm
         // ========================================================
 
-        if (left_arm_runtime_.active_trajectory)
+        if (left_arm_runtime_.state == ArmMotionState::Running)
         {
-            const auto elapsed = now - left_arm_runtime_.trajectory_start_time;
-            const auto point = left_arm_runtime_.active_trajectory->sample(elapsed);
-            // TODO:
-            //
-            // 当前固定 0.2 是已知问题。
-            //
-            // TIAGo Arm YAML 中的 max_velocity
-            // 约为 0.174532925 rad/s，
-            // 因此真正测试 trajectory 前必须修正。
-            //
-            // 本轮只做 Executor 结构整理，
-            // 暂时保持现有行为。
-            Arm::JointValues velocity_limits{};
-            velocity_limits.fill(0.2);
-            left_arm_.setTarget(point.position, velocity_limits);
-            if (point.finished)
+            if (left_arm_runtime_.mode == ArmControlMode::Trajectory)
             {
-                // 不停止 Controller。
-                //
-                // Controller 会继续保持最后一次轨迹采样位置。
-                left_arm_runtime_.active_trajectory.reset();
-                robot::common::logger()->info("Left trajectory finished");
+                if (left_arm_runtime_.active_trajectory)
+                {
+                    auto &active = *left_arm_runtime_.active_trajectory;
+                    const auto elapsed = now - active.start_time;
+                    const auto point = active.trajectory->sample(elapsed);
+
+                    // point.velocity / point.acceleration
+                    // 是轨迹参考状态。
+                    //
+                    // 当前 ArmController 是位置控制链，
+                    // 所以实际下发：
+                    //
+                    // position       = point.position
+                    // velocity_limit = 本次 trajectory 的执行限制
+                    left_arm_.setTarget(point.position, active.velocity_limits);
+                    if (point.finished)
+                    {
+                        // reached 不自动 Stop Controller。
+                        //
+                        // Controller 继续保持最后一个位置目标。
+                        left_arm_runtime_.active_trajectory.reset();
+                        robot::common::logger()->info("Left trajectory finished");
+                    }
+                }
+            }
+            else
+            {
+                if (left_arm_runtime_.servo_target)
+                {
+                    left_arm_.setTarget(left_arm_runtime_.servo_target->positions,
+                                        left_arm_runtime_.servo_target->velocity_limits);
+                }
             }
         }
 
         // ========================================================
-        // Right trajectory
+        // Right Arm
         // ========================================================
 
-        if (right_arm_runtime_.active_trajectory)
+        if (right_arm_runtime_.state == ArmMotionState::Running)
         {
-            const auto elapsed = now - right_arm_runtime_.trajectory_start_time;
-            const auto point = right_arm_runtime_.active_trajectory->sample(elapsed);
-            // TODO:
-            // 同左臂，后续处理 trajectory velocity limit。
-            Arm::JointValues velocity_limits{};
-            velocity_limits.fill(0.2);
-            right_arm_.setTarget(point.position, velocity_limits);
-            if (point.finished)
+            if (right_arm_runtime_.mode == ArmControlMode::Trajectory)
             {
-                right_arm_runtime_.active_trajectory.reset();
-                robot::common::logger()->info("Right trajectory finished");
+                if (right_arm_runtime_.active_trajectory)
+                {
+                    auto &active = *right_arm_runtime_.active_trajectory;
+                    const auto elapsed = now - active.start_time;
+                    const auto point = active.trajectory->sample(elapsed);
+                    right_arm_.setTarget(point.position, active.velocity_limits);
+                    if (point.finished)
+                    {
+                        right_arm_runtime_.active_trajectory.reset();
+                        robot::common::logger()->info("Right trajectory finished");
+                    }
+                }
+            }
+            else
+            {
+                if (right_arm_runtime_.servo_target)
+                {
+                    right_arm_.setTarget(right_arm_runtime_.servo_target->positions,
+                                         right_arm_runtime_.servo_target->velocity_limits);
+                }
             }
         }
 
-        // ========================================================
-        // Left servo
-        // ========================================================
-
-        if (left_arm_runtime_.servo_target)
-        {
-            left_arm_.setTarget(left_arm_runtime_.servo_target->positions,
-
-                                left_arm_runtime_.servo_target->velocity_limits);
-        }
-
-        // ========================================================
-        // Right servo
-        // ========================================================
-
-        if (right_arm_runtime_.servo_target)
-        {
-            right_arm_.setTarget(right_arm_runtime_.servo_target->positions,
-
-                                 right_arm_runtime_.servo_target->velocity_limits);
-        }
-
-        // Holding 不需要在这里执行任何操作。
+        // Holding:
         //
-        // applyLeftArmHold()/applyRightArmHold()
-        // 已经把真实当前位置写入 Controller。
+        // 不需要在这里重新 setTarget。
         //
-        // 后面的 updateControllers()
-        // 会继续刷新 Controller 保存的 Hold 目标。
+        // applyXXXHold() 已经把当前位置写入 Controller，
+        // Controller::update() 会继续周期刷新。
     }
-
-} // namespace robot::tiago
+}

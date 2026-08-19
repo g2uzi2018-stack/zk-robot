@@ -5,17 +5,10 @@
 
 namespace robot::tiago
 {
-
-    RobotControlExecutor::RobotControlExecutor(ArmController &left_arm, ArmController &right_arm,
-                                               GripperController &left_gripper, GripperController &right_gripper,
-                                               HeadController &head, TorsoController &torso,
-                                               BaseController &base,
+    RobotControlExecutor::RobotControlExecutor(ArmController &left_arm, ArmController &right_arm, GripperController &left_gripper,
+                                               GripperController &right_gripper, HeadController &head, TorsoController &torso, BaseController &base,
                                                Config config)
-        : left_arm_(left_arm), right_arm_(right_arm),
-          left_gripper_(left_gripper), right_gripper_(right_gripper),
-          head_(head),
-          torso_(torso),
-          base_(base),
+        : left_arm_(left_arm), right_arm_(right_arm), left_gripper_(left_gripper), right_gripper_(right_gripper), head_(head), torso_(torso), base_(base),
           config_(config)
     {
     }
@@ -80,21 +73,17 @@ namespace robot::tiago
 
     void RobotControlExecutor::runCycle(TimePoint now)
     {
-        // 1.
-        // 处理外部线程提交的全部命令。
+        // 1. 处理外部线程提交的全部命令。
         processCommands();
 
-        // 2.
-        // Arm 有 Trajectory / Servo runtime，
-        // 所以需要根据 runtime 更新本周期目标。
+        // 2. Arm 有 Trajectory / Servo runtime，
+        //    所以需要根据 runtime 更新本周期目标。
         updateArmTargets(now);
 
-        // 3.
-        // 所有 Controller 执行一个控制周期。
+        // 3. 所有 Controller 执行一个控制周期。
         updateControllers();
 
-        // 4.
-        // 发布状态快照。
+        // 4. 发布状态快照。
         publishState(now);
     }
 
@@ -106,6 +95,8 @@ namespace robot::tiago
     {
         CommandMailbox commands;
         {
+            // 锁只保护 mailbox 的交换，不把 Controller 操作放在临界区内，
+            // 避免外部提交线程被一个完整控制周期的执行时间阻塞。
             std::lock_guard<std::mutex> lock(command_mutex_);
 
             // 一次性取走整个机器人当前 mailbox。
@@ -124,6 +115,9 @@ namespace robot::tiago
         //
         // 从这里开始所有 Controller / Runtime
         // 操作都只发生在 Executor 控制线程。
+
+        // 按 Arm -> Gripper -> Head -> Torso -> Base 的固定顺序消费，
+        // 让同一控制周期内的命令处理顺序保持确定。
 
         // --------------------------------------------------------
         // Arm
@@ -239,6 +233,8 @@ namespace robot::tiago
         // Publish snapshot
         // --------------------------------------------------------
 
+        // 先组装完整快照，再一次性替换共享状态，
+        // 读取线程不会观察到只更新了一部分的 RobotState。
         std::lock_guard<std::mutex> lock(state_mutex_);
         robot_state_ = state;
     }

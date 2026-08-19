@@ -21,7 +21,6 @@
 
 namespace robot::tiago
 {
-
     class RobotControlExecutor
     {
     public:
@@ -54,12 +53,10 @@ namespace robot::tiago
         // Arm 当前允许使用的目标来源。
         //
         // Trajectory:
-        //   Executor 每周期从 JointTrajectory
-        //   采样位置目标。
+        //   Executor 每周期从 JointTrajectory 采样位置目标。
         //
         // Servo:
-        //   Executor 使用外部持续提交的
-        //   最新实时位置目标。
+        //   Executor 使用外部持续提交的最新实时位置目标。
         //
         // Hold / Stop 不属于 ControlMode。
         enum class ArmControlMode
@@ -118,11 +115,8 @@ namespace robot::tiago
         };
 
     public:
-        RobotControlExecutor(ArmController &left_arm, ArmController &right_arm,
-                             GripperController &left_gripper, GripperController &right_gripper,
-                             HeadController &head, TorsoController &torso,
-                             BaseController &base,
-                             Config config);
+        RobotControlExecutor(ArmController &left_arm, ArmController &right_arm, GripperController &left_gripper, GripperController &right_gripper,
+                             HeadController &head, TorsoController &torso, BaseController &base, Config config);
         ~RobotControlExecutor();
         RobotControlExecutor(const RobotControlExecutor &) = delete;
         RobotControlExecutor &operator=(const RobotControlExecutor &) = delete;
@@ -154,10 +148,8 @@ namespace robot::tiago
         // 最底层 Joint 仍然会检查：
         //
         // velocity_limit <= YAML max_velocity
-        void submitLeftArmTrajectory(std::shared_ptr<const ArmTrajectory> trajectory,
-                                     const Arm::JointValues &velocity_limits);
-        void submitRightArmTrajectory(std::shared_ptr<const ArmTrajectory> trajectory,
-                                      const Arm::JointValues &velocity_limits);
+        void submitLeftArmTrajectory(std::shared_ptr<const ArmTrajectory> trajectory, const Arm::JointValues &velocity_limits);
+        void submitRightArmTrajectory(std::shared_ptr<const ArmTrajectory> trajectory, const Arm::JointValues &velocity_limits);
 
     public:
         // ========================================================
@@ -201,8 +193,7 @@ namespace robot::tiago
         // 在 Executor 控制线程执行。
 
         void setLeftGripperTarget(const Gripper::FingerValues &positions, const Gripper::FingerValues &velocity_limits);
-        void setRightGripperTarget(const Gripper::FingerValues &positions,
-                                   const Gripper::FingerValues &velocity_limits);
+        void setRightGripperTarget(const Gripper::FingerValues &positions, const Gripper::FingerValues &velocity_limits);
 
     public:
         // ========================================================
@@ -320,8 +311,8 @@ namespace robot::tiago
 
         // 整台机器人只有一个 CommandMailbox。
         //
-        // 外部线程往这里提交命令。
-        // Executor 控制线程周期性一次性取走。
+        // 外部线程只在 command_mutex_ 保护下写入。
+        // Executor 控制线程每周期一次性取走后独占处理。
         struct CommandMailbox
         {
             ArmMailbox left_arm;

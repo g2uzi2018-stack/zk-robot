@@ -2,13 +2,14 @@
 
 namespace robot::tiago
 {
+    // Public setter 只写入受 mutex 保护的 mailbox；Controller 统一由 Executor
+    // 控制线程修改，避免与控制周期并发访问 Controller。
 
     // ============================================================
     // Left Gripper mailbox
     // ============================================================
 
-    void RobotControlExecutor::setLeftGripperTarget(const Gripper::FingerValues &positions,
-                                                    const Gripper::FingerValues &velocity_limits)
+    void RobotControlExecutor::setLeftGripperTarget(const Gripper::FingerValues &positions, const Gripper::FingerValues &velocity_limits)
     {
         std::lock_guard<std::mutex> lock(command_mutex_);
 
@@ -23,8 +24,7 @@ namespace robot::tiago
     // Right Gripper mailbox
     // ============================================================
 
-    void RobotControlExecutor::setRightGripperTarget(const Gripper::FingerValues &positions,
-                                                     const Gripper::FingerValues &velocity_limits)
+    void RobotControlExecutor::setRightGripperTarget(const Gripper::FingerValues &positions, const Gripper::FingerValues &velocity_limits)
     {
         std::lock_guard<std::mutex> lock(command_mutex_);
         command_mailbox_.right_gripper = GripperTarget{positions, velocity_limits};
@@ -34,8 +34,7 @@ namespace robot::tiago
     // Head mailbox
     // ============================================================
 
-    void RobotControlExecutor::setHeadTarget(const Head::JointValues &positions,
-                                             const Head::JointValues &velocity_limits)
+    void RobotControlExecutor::setHeadTarget(const Head::JointValues &positions, const Head::JointValues &velocity_limits)
     {
         std::lock_guard<std::mutex> lock(command_mutex_);
         command_mailbox_.head = HeadTarget{positions, velocity_limits};

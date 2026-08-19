@@ -27,8 +27,7 @@ namespace robot::tiago
     // Arm trajectory mailbox
     // ============================================================
 
-    void RobotControlExecutor::submitLeftArmTrajectory(std::shared_ptr<const ArmTrajectory> trajectory,
-                                                       const Arm::JointValues &velocity_limits)
+    void RobotControlExecutor::submitLeftArmTrajectory(std::shared_ptr<const ArmTrajectory> trajectory, const Arm::JointValues &velocity_limits)
     {
         if (!trajectory)
         {
@@ -56,8 +55,7 @@ namespace robot::tiago
         mailbox.trajectory = ArmTrajectoryCommand{std::move(trajectory), velocity_limits};
     }
 
-    void RobotControlExecutor::submitRightArmTrajectory(std::shared_ptr<const ArmTrajectory> trajectory,
-                                                        const Arm::JointValues &velocity_limits)
+    void RobotControlExecutor::submitRightArmTrajectory(std::shared_ptr<const ArmTrajectory> trajectory, const Arm::JointValues &velocity_limits)
     {
         if (!trajectory)
         {
@@ -80,8 +78,7 @@ namespace robot::tiago
     // Arm servo mailbox
     // ============================================================
 
-    void RobotControlExecutor::setLeftArmServoTarget(const Arm::JointValues &positions,
-                                                     const Arm::JointValues &velocity_limits)
+    void RobotControlExecutor::setLeftArmServoTarget(const Arm::JointValues &positions, const Arm::JointValues &velocity_limits)
     {
         std::lock_guard<std::mutex> lock(command_mutex_);
         auto &mailbox = command_mailbox_.left_arm;
@@ -98,8 +95,7 @@ namespace robot::tiago
         mailbox.servo_target = ArmTarget{positions, velocity_limits};
     }
 
-    void RobotControlExecutor::setRightArmServoTarget(const Arm::JointValues &positions,
-                                                      const Arm::JointValues &velocity_limits)
+    void RobotControlExecutor::setRightArmServoTarget(const Arm::JointValues &positions, const Arm::JointValues &velocity_limits)
     {
         std::lock_guard<std::mutex> lock(command_mutex_);
         auto &mailbox = command_mailbox_.right_arm;
@@ -160,6 +156,8 @@ namespace robot::tiago
     // Left Arm command processing
     // ============================================================
 
+    // 左右 Arm 都按 Mode -> Hold/Stop -> Trajectory -> Servo 的顺序消费 mailbox。
+    // Hold/Stop 会提前结束本周期，避免普通运动目标覆盖安全动作。
     void RobotControlExecutor::processLeftArmCommands(ArmMailbox &commands)
     {
         // --------------------------------------------------------
@@ -220,8 +218,7 @@ namespace robot::tiago
             }
             const auto velocity_limits = commands.trajectory->velocity_limits;
             auto trajectory = std::move(commands.trajectory->trajectory);
-            left_arm_runtime_.active_trajectory =
-                ActiveArmTrajectory{std::move(trajectory), velocity_limits, Clock::now()};
+            left_arm_runtime_.active_trajectory = ActiveArmTrajectory{std::move(trajectory), velocity_limits, Clock::now()};
 
             // 新 trajectory 成为唯一运动 source。
             left_arm_runtime_.servo_target.reset();
@@ -286,6 +283,8 @@ namespace robot::tiago
             {
                 applyRightArmStop();
             }
+
+            // 本周期 Hold / Stop 优先。
             return;
         }
 
@@ -301,8 +300,7 @@ namespace robot::tiago
             }
             const auto velocity_limits = commands.trajectory->velocity_limits;
             auto trajectory = std::move(commands.trajectory->trajectory);
-            right_arm_runtime_.active_trajectory =
-                ActiveArmTrajectory{std::move(trajectory), velocity_limits, Clock::now()};
+            right_arm_runtime_.active_trajectory = ActiveArmTrajectory{std::move(trajectory), velocity_limits, Clock::now()};
             right_arm_runtime_.servo_target.reset();
             right_arm_runtime_.hold_target.reset();
             right_arm_runtime_.state = ArmMotionState::Running;
@@ -483,8 +481,7 @@ namespace robot::tiago
             {
                 if (left_arm_runtime_.servo_target)
                 {
-                    left_arm_.setTarget(left_arm_runtime_.servo_target->positions,
-                                        left_arm_runtime_.servo_target->velocity_limits);
+                    left_arm_.setTarget(left_arm_runtime_.servo_target->positions, left_arm_runtime_.servo_target->velocity_limits);
                 }
             }
         }
@@ -514,8 +511,7 @@ namespace robot::tiago
             {
                 if (right_arm_runtime_.servo_target)
                 {
-                    right_arm_.setTarget(right_arm_runtime_.servo_target->positions,
-                                         right_arm_runtime_.servo_target->velocity_limits);
+                    right_arm_.setTarget(right_arm_runtime_.servo_target->positions, right_arm_runtime_.servo_target->velocity_limits);
                 }
             }
         }

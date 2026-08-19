@@ -105,16 +105,14 @@ namespace
         throw std::runtime_error("Timed out waiting for torso feedback");
     }
 
-    Arm::JointValues armVelocityLimits(const CanBusConfig &shoulder, const CanBusConfig &elbow,
-                                       const CanBusConfig &wrist)
+    Arm::JointValues armVelocityLimits(const CanBusConfig &shoulder, const CanBusConfig &elbow, const CanBusConfig &wrist)
     {
         if (shoulder.joints.size() != 2 || elbow.joints.size() != 2 || wrist.joints.size() != 3)
         {
             throw std::logic_error("Invalid arm config while building velocity limits");
         }
-        return {shoulder.joints[0].limits.max_velocity, shoulder.joints[1].limits.max_velocity,
-                elbow.joints[0].limits.max_velocity,    elbow.joints[1].limits.max_velocity,
-                wrist.joints[0].limits.max_velocity,    wrist.joints[1].limits.max_velocity,
+        return {shoulder.joints[0].limits.max_velocity, shoulder.joints[1].limits.max_velocity, elbow.joints[0].limits.max_velocity,
+                elbow.joints[1].limits.max_velocity,    wrist.joints[0].limits.max_velocity,    wrist.joints[1].limits.max_velocity,
                 wrist.joints[2].limits.max_velocity};
     }
 
@@ -136,7 +134,6 @@ namespace
         return {config.joints[0].limits.max_velocity, config.joints[1].limits.max_velocity};
     }
 } // namespace
-
 int main()
 {
     using namespace robot::tiago;
@@ -259,10 +256,8 @@ int main()
             // 7. Velocity limits
             // =================================================
 
-            const auto left_arm_velocity =
-                armVelocityLimits(left_shoulder_config, left_elbow_config, left_wrist_config);
-            const auto right_arm_velocity =
-                armVelocityLimits(right_shoulder_config, right_elbow_config, right_wrist_config);
+            const auto left_arm_velocity = armVelocityLimits(left_shoulder_config, left_elbow_config, left_wrist_config);
+            const auto right_arm_velocity = armVelocityLimits(right_shoulder_config, right_elbow_config, right_wrist_config);
             const auto left_gripper_velocity = gripperVelocityLimits(left_gripper_config);
             const auto right_gripper_velocity = gripperVelocityLimits(right_gripper_config);
             const auto head_velocity = headVelocityLimits(head_config);
@@ -336,8 +331,7 @@ int main()
             {
                 if (executor.state() == RobotControlExecutor::State::Faulted)
                 {
-                    throw std::runtime_error(std::string("Executor fault during ") + stage + ": " +
-                                             executor.faultMessage());
+                    throw std::runtime_error(std::string("Executor fault during ") + stage + ": " + executor.faultMessage());
                 }
             };
 
@@ -349,16 +343,12 @@ int main()
             executor_config.control_period = std::chrono::milliseconds{100};
             executor_config.command_timeout = std::chrono::milliseconds{500};
             {
-                RobotControlExecutor executor(left_arm_controller, right_arm_controller,
-                                              left_gripper_controller, right_gripper_controller,
-                                              head_controller, torso_controller,
-                                              base_controller,
-                                              executor_config);
+                RobotControlExecutor executor(left_arm_controller, right_arm_controller, left_gripper_controller, right_gripper_controller, head_controller,
+                                              torso_controller, base_controller, executor_config);
                 executor.start();
                 robot::common::logger()->info("Full Executor mailbox integration test started");
 
-                // 先让所有 Controller
-                // 在 Executor 中运行几个周期。
+                // 先让所有 Controller 在 Executor 中运行几个周期。
                 std::this_thread::sleep_for(std::chrono::milliseconds{500});
                 checkExecutor(executor, "startup");
 
@@ -517,14 +507,11 @@ int main()
                 //
                 // 0.25 rad 在 Webots 中应该比较明显。
                 left_servo_target[0] = offsetWithinLimits(left_arm_position[0], left_shoulder_config.joints[0], 0.25);
-                right_servo_target[0] =
-                    offsetWithinLimits(right_arm_position[0], right_shoulder_config.joints[0], 0.25);
+                right_servo_target[0] = offsetWithinLimits(right_arm_position[0], right_shoulder_config.joints[0], 0.25);
 
-                // mode 和 Servo target 可以在同一个
-                // mailbox 周期提交。
+                // mode 和 Servo target 可以在同一个 mailbox 周期提交。
                 //
-                // Executor processArmCommands()
-                // 会先处理 mode，再处理 Servo target。
+                // Executor processArmCommands() 会先处理 mode，再处理 Servo target。
                 executor.setLeftArmControlMode(RobotControlExecutor::ArmControlMode::Servo);
                 executor.setRightArmControlMode(RobotControlExecutor::ArmControlMode::Servo);
                 executor.setLeftArmServoTarget(left_servo_target, left_arm_velocity);
@@ -565,23 +552,20 @@ int main()
                 std::this_thread::sleep_for(std::chrono::milliseconds{300});
                 checkExecutor(executor, "Arm Hold");
                 const auto hold_state_1 = executor.latestState();
-                if (hold_state_1.left_arm_state != ArmController::ControlState::Running ||
-                    hold_state_1.right_arm_state != ArmController::ControlState::Running)
+                if (hold_state_1.left_arm_state != ArmController::ControlState::Running || hold_state_1.right_arm_state != ArmController::ControlState::Running)
                 {
                     throw std::runtime_error("ArmController is not Running during Hold");
                 }
                 std::this_thread::sleep_for(std::chrono::milliseconds{700});
                 checkExecutor(executor, "Arm Hold stability");
                 const auto hold_state_2 = executor.latestState();
-                if (!hold_state_1.left_arm_positions[0] || !hold_state_2.left_arm_positions[0] ||
-                    !hold_state_1.right_arm_positions[0] || !hold_state_2.right_arm_positions[0])
+                if (!hold_state_1.left_arm_positions[0] || !hold_state_2.left_arm_positions[0] || !hold_state_1.right_arm_positions[0] ||
+                    !hold_state_2.right_arm_positions[0])
                 {
                     throw std::runtime_error("Arm feedback unavailable during Hold");
                 }
-                const double left_hold_drift =
-                    absolute(*hold_state_2.left_arm_positions[0] - *hold_state_1.left_arm_positions[0]);
-                const double right_hold_drift =
-                    absolute(*hold_state_2.right_arm_positions[0] - *hold_state_1.right_arm_positions[0]);
+                const double left_hold_drift = absolute(*hold_state_2.left_arm_positions[0] - *hold_state_1.left_arm_positions[0]);
+                const double right_hold_drift = absolute(*hold_state_2.right_arm_positions[0] - *hold_state_1.right_arm_positions[0]);
                 if (left_hold_drift > 0.03)
                 {
                     throw std::runtime_error("Left arm continued moving after Hold");
@@ -604,8 +588,7 @@ int main()
                 checkExecutor(executor, "Arm Stop");
                 {
                     const auto state = executor.latestState();
-                    if (state.left_arm_state != ArmController::ControlState::Idle ||
-                        state.right_arm_state != ArmController::ControlState::Idle)
+                    if (state.left_arm_state != ArmController::ControlState::Idle || state.right_arm_state != ArmController::ControlState::Idle)
                     {
                         throw std::runtime_error("ArmControllers did not enter Idle");
                     }
@@ -617,8 +600,7 @@ int main()
                 // =================================================
 
                 const auto statistics = executor.statistics();
-                const auto last_execution_us =
-                    std::chrono::duration_cast<std::chrono::microseconds>(statistics.last_execution_time).count();
+                const auto last_execution_us = std::chrono::duration_cast<std::chrono::microseconds>(statistics.last_execution_time).count();
                 std::cout << "\n"
                           << "====================================\n"
                           << "FULL EXECUTOR MAILBOX TEST\n"

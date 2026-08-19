@@ -21,6 +21,7 @@
 
 namespace robot::tiago
 {
+
     class RobotControlExecutor
     {
     public:
@@ -46,13 +47,19 @@ namespace robot::tiago
             Faulted
         };
 
+        // ========================================================
+        // Arm execution state
+        // ========================================================
+
         // Arm 当前允许使用的目标来源。
         //
         // Trajectory:
-        //   Executor 每周期从 JointTrajectory 采样位置目标。
+        //   Executor 每周期从 JointTrajectory
+        //   采样位置目标。
         //
         // Servo:
-        //   Executor 使用外部持续提交的最新实时位置目标。
+        //   Executor 使用外部持续提交的
+        //   最新实时位置目标。
         //
         // Hold / Stop 不属于 ControlMode。
         enum class ArmControlMode
@@ -67,8 +74,7 @@ namespace robot::tiago
         //   当前没有 active motion source。
         //
         // Running:
-        //   正在执行 Trajectory / Servo，
-        //   或已到达最终目标但 Controller 继续保持最后位置。
+        //   正在执行 Trajectory / Servo。
         //
         // Holding:
         //   显式 Hold 已生效。
@@ -78,6 +84,11 @@ namespace robot::tiago
             Running,
             Holding
         };
+
+        // ========================================================
+        // Statistics
+        // ========================================================
+
         struct CycleStatistics
         {
             uint64_t cycle_count{0};
@@ -87,6 +98,11 @@ namespace robot::tiago
             Duration max_execution_time{};
             uint64_t deadline_miss_count{0};
         };
+
+        // ========================================================
+        // Published robot state
+        // ========================================================
+
         struct RobotState
         {
             TimePoint timestamp{};
@@ -102,12 +118,9 @@ namespace robot::tiago
         };
 
     public:
-        RobotControlExecutor(ArmController &left_arm,
-                             ArmController &right_arm,
-                             GripperController &left_gripper,
-                             GripperController &right_gripper,
-                             HeadController &head,
-                             TorsoController &torso,
+        RobotControlExecutor(ArmController &left_arm, ArmController &right_arm,
+                             GripperController &left_gripper, GripperController &right_gripper,
+                             HeadController &head, TorsoController &torso,
                              BaseController &base,
                              Config config);
         ~RobotControlExecutor();
@@ -124,12 +137,6 @@ namespace robot::tiago
         // Arm mode
         // ========================================================
 
-        // 显式切换 Arm 目标来源。
-        //
-        // 真正切换发生在 Executor 控制线程。
-        //
-        // Trajectory <-> Servo 切换时，
-        // 旧 active source 会被清理。
         void setLeftArmControlMode(ArmControlMode mode);
         void setRightArmControlMode(ArmControlMode mode);
 
@@ -144,8 +151,9 @@ namespace robot::tiago
         //
         // 它不是 JointTrajectoryPoint::velocity。
         //
-        // 最底层 Joint 仍会再次检查：
-        //   velocity_limit <= YAML max_velocity。
+        // 最底层 Joint 仍然会检查：
+        //
+        // velocity_limit <= YAML max_velocity
         void submitLeftArmTrajectory(std::shared_ptr<const ArmTrajectory> trajectory,
                                      const Arm::JointValues &velocity_limits);
         void submitRightArmTrajectory(std::shared_ptr<const ArmTrajectory> trajectory,
@@ -156,7 +164,7 @@ namespace robot::tiago
         // Arm servo
         // ========================================================
 
-        // Servo 是实时位置目标流。
+        // Servo = 实时位置目标流。
         //
         // latest target wins。
         void setLeftArmServoTarget(const Arm::JointValues &positions, const Arm::JointValues &velocity_limits);
@@ -184,16 +192,40 @@ namespace robot::tiago
 
     public:
         // ========================================================
-        // Other components
+        // Gripper
         // ========================================================
+
+        // 所有这些 public API 都只提交 mailbox。
         //
-        // 下一阶段正式接入 CommandMailbox。
+        // 真正 Controller::setTarget()
+        // 在 Executor 控制线程执行。
 
         void setLeftGripperTarget(const Gripper::FingerValues &positions, const Gripper::FingerValues &velocity_limits);
         void setRightGripperTarget(const Gripper::FingerValues &positions,
                                    const Gripper::FingerValues &velocity_limits);
+
+    public:
+        // ========================================================
+        // Head
+        // ========================================================
+
         void setHeadTarget(const Head::JointValues &positions, const Head::JointValues &velocity_limits);
+
+    public:
+        // ========================================================
+        // Torso
+        // ========================================================
+
         void setTorsoTarget(double position, double velocity_limit);
+
+    public:
+        // ========================================================
+        // Base
+        // ========================================================
+
+        // latest velocity target wins。
+        //
+        // command_timeout 后续会作用于这个命令流。
         void setBaseVelocity(double linear_velocity, double angular_velocity);
 
     public:
@@ -222,30 +254,22 @@ namespace robot::tiago
         };
 
         // 外部提交的一整条 trajectory 命令。
-        //
-        // trajectory:
-        //   轨迹本身。
-        //
-        // velocity_limits:
-        //   这次执行允许的关节速度上限。
         struct ArmTrajectoryCommand
         {
             std::shared_ptr<const ArmTrajectory> trajectory;
             Arm::JointValues velocity_limits{};
         };
 
-        // 当前正在执行的一整条 trajectory。
+        // 当前真正正在执行的 trajectory。
         //
-        // 把 trajectory、执行速度限制和开始时间
-        // 封装在一起，避免三个状态成员分散。
+        // trajectory + velocity limits + start time
+        // 属于一个不可分割的执行状态。
         struct ActiveArmTrajectory
         {
             std::shared_ptr<const ArmTrajectory> trajectory;
             Arm::JointValues velocity_limits{};
             TimePoint start_time{};
         };
-
-        // Arm 在 Executor 中跨控制周期保存的状态。
         struct ArmRuntime
         {
             ArmControlMode mode{ArmControlMode::Trajectory};
@@ -253,6 +277,32 @@ namespace robot::tiago
             std::optional<ActiveArmTrajectory> active_trajectory;
             std::optional<ArmTarget> servo_target;
             std::optional<ArmTarget> hold_target;
+        };
+
+    private:
+        // ========================================================
+        // Other component command types
+        // ========================================================
+
+        struct GripperTarget
+        {
+            Gripper::FingerValues positions{};
+            Gripper::FingerValues velocity_limits{};
+        };
+        struct HeadTarget
+        {
+            Head::JointValues positions{};
+            Head::JointValues velocity_limits{};
+        };
+        struct TorsoTarget
+        {
+            double position{0.0};
+            double velocity_limit{0.0};
+        };
+        struct BaseVelocityTarget
+        {
+            double linear_velocity{0.0};
+            double angular_velocity{0.0};
         };
 
     private:
@@ -267,10 +317,20 @@ namespace robot::tiago
             std::optional<ArmTarget> servo_target;
             std::optional<ArmTrajectoryCommand> trajectory;
         };
+
+        // 整台机器人只有一个 CommandMailbox。
+        //
+        // 外部线程往这里提交命令。
+        // Executor 控制线程周期性一次性取走。
         struct CommandMailbox
         {
             ArmMailbox left_arm;
             ArmMailbox right_arm;
+            std::optional<GripperTarget> left_gripper;
+            std::optional<GripperTarget> right_gripper;
+            std::optional<HeadTarget> head;
+            std::optional<TorsoTarget> torso;
+            std::optional<BaseVelocityTarget> base_velocity;
         };
 
     private:
@@ -281,9 +341,6 @@ namespace robot::tiago
         void controlLoop();
         void runCycle(TimePoint now);
         void processCommands();
-
-        // 根据 ArmRuntime，
-        // 更新本周期 ArmController 目标。
         void updateArmTargets(TimePoint now);
         void updateControllers();
         void publishState(TimePoint now);
@@ -304,9 +361,22 @@ namespace robot::tiago
 
     private:
         // ========================================================
+        // Other component executor commands
+        // ========================================================
+
+        void processLeftGripperCommand(const GripperTarget &command);
+        void processRightGripperCommand(const GripperTarget &command);
+        void processHeadCommand(const HeadTarget &command);
+        void processTorsoCommand(const TorsoTarget &command);
+        void processBaseVelocityCommand(const BaseVelocityTarget &command);
+
+    private:
+        // ========================================================
         // Controllers
         // ========================================================
 
+        // Executor 不拥有 Controller。
+        // 生命周期由外部负责。
         ArmController &left_arm_;
         ArmController &right_arm_;
         GripperController &left_gripper_;
@@ -338,7 +408,11 @@ namespace robot::tiago
         // Runtime
         // ========================================================
 
-        // 只由 Executor 控制线程访问。
+        // Arm 有真正的跨周期执行状态，
+        // 所以需要 Runtime。
+        //
+        // Gripper / Head / Torso 当前没有额外 Runtime，
+        // Controller 自己已经保存 latest target。
         ArmRuntime left_arm_runtime_;
         ArmRuntime right_arm_runtime_;
 

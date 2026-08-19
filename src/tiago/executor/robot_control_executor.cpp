@@ -5,17 +5,16 @@
 
 namespace robot::tiago
 {
-    RobotControlExecutor::RobotControlExecutor(ArmController &left_arm,
-                                               ArmController &right_arm,
-                                               GripperController &left_gripper,
-                                               GripperController &right_gripper,
-                                               HeadController &head,
-                                               TorsoController &torso,
+
+    RobotControlExecutor::RobotControlExecutor(ArmController &left_arm, ArmController &right_arm,
+                                               GripperController &left_gripper, GripperController &right_gripper,
+                                               HeadController &head, TorsoController &torso,
                                                BaseController &base,
                                                Config config)
         : left_arm_(left_arm), right_arm_(right_arm),
           left_gripper_(left_gripper), right_gripper_(right_gripper),
-          head_(head), torso_(torso),
+          head_(head),
+          torso_(torso),
           base_(base),
           config_(config)
     {
@@ -81,16 +80,21 @@ namespace robot::tiago
 
     void RobotControlExecutor::runCycle(TimePoint now)
     {
-        // 1. 处理外部提交命令。
+        // 1.
+        // 处理外部线程提交的全部命令。
         processCommands();
 
-        // 2. 根据 Runtime 更新 Arm 目标。
+        // 2.
+        // Arm 有 Trajectory / Servo runtime，
+        // 所以需要根据 runtime 更新本周期目标。
         updateArmTargets(now);
 
-        // 3. 所有 Controller 执行一个周期。
+        // 3.
+        // 所有 Controller 执行一个控制周期。
         updateControllers();
 
-        // 4. 发布机器人状态。
+        // 4.
+        // 发布状态快照。
         publishState(now);
     }
 
@@ -104,29 +108,69 @@ namespace robot::tiago
         {
             std::lock_guard<std::mutex> lock(command_mutex_);
 
-            // 一次性取走当前 mailbox。
+            // 一次性取走整个机器人当前 mailbox。
+            //
+            // commands:
+            //   本周期需要处理的命令。
+            //
+            // command_mailbox_:
+            //   马上恢复为空邮箱，
+            //   外部线程可以继续写下一批命令。
             commands = std::move(command_mailbox_);
-
-            // 马上换一个新的空 mailbox，
-            // 外部线程可以继续提交下一批命令。
             command_mailbox_ = CommandMailbox{};
         }
 
-        // 此处 command_mutex_ 已释放。
+        // command_mutex_ 到这里已经释放。
         //
-        // Controller / Runtime 操作全部发生在
-        // Executor 控制线程内。
+        // 从这里开始所有 Controller / Runtime
+        // 操作都只发生在 Executor 控制线程。
+
+        // --------------------------------------------------------
+        // Arm
+        // --------------------------------------------------------
 
         processLeftArmCommands(commands.left_arm);
         processRightArmCommands(commands.right_arm);
 
-        // 下一阶段：
-        //
-        // processLeftGripperCommands(...)
-        // processRightGripperCommands(...)
-        // processHeadCommands(...)
-        // processTorsoCommands(...)
-        // processBaseCommands(...)
+        // --------------------------------------------------------
+        // Gripper
+        // --------------------------------------------------------
+
+        if (commands.left_gripper)
+        {
+            processLeftGripperCommand(*commands.left_gripper);
+        }
+        if (commands.right_gripper)
+        {
+            processRightGripperCommand(*commands.right_gripper);
+        }
+
+        // --------------------------------------------------------
+        // Head
+        // --------------------------------------------------------
+
+        if (commands.head)
+        {
+            processHeadCommand(*commands.head);
+        }
+
+        // --------------------------------------------------------
+        // Torso
+        // --------------------------------------------------------
+
+        if (commands.torso)
+        {
+            processTorsoCommand(*commands.torso);
+        }
+
+        // --------------------------------------------------------
+        // Base
+        // --------------------------------------------------------
+
+        if (commands.base_velocity)
+        {
+            processBaseVelocityCommand(*commands.base_velocity);
+        }
     }
 
     // ============================================================
@@ -135,6 +179,10 @@ namespace robot::tiago
 
     void RobotControlExecutor::updateControllers()
     {
+        // 固定执行顺序。
+        //
+        // 与之前已经测试通过的机器人级执行顺序保持一致。
+
         left_arm_.update();
         right_arm_.update();
         left_gripper_.update();
@@ -152,16 +200,44 @@ namespace robot::tiago
     {
         RobotState state;
         state.timestamp = now;
+
+        // --------------------------------------------------------
+        // Arm
+        // --------------------------------------------------------
+
         state.left_arm_positions = left_arm_.currentPositions();
         state.right_arm_positions = right_arm_.currentPositions();
         state.left_arm_state = left_arm_.state();
         state.right_arm_state = right_arm_.state();
+
+        // --------------------------------------------------------
+        // Gripper
+        // --------------------------------------------------------
+
+        state.left_gripper_positions = left_gripper_.currentPositions();
+        state.right_gripper_positions = right_gripper_.currentPositions();
+
+        // --------------------------------------------------------
+        // Head
+        // --------------------------------------------------------
+
+        state.head_positions = head_.currentPositions();
+
+        // --------------------------------------------------------
+        // Torso
+        // --------------------------------------------------------
+
+        state.torso_position = torso_.currentPosition();
+
+        // --------------------------------------------------------
+        // Base
+        // --------------------------------------------------------
+
         state.base_state = base_.state();
 
-        // TODO:
-        //
-        // Gripper / Head / Torso snapshot
-        // 下一阶段补完整。
+        // --------------------------------------------------------
+        // Publish snapshot
+        // --------------------------------------------------------
 
         std::lock_guard<std::mutex> lock(state_mutex_);
         robot_state_ = state;
@@ -191,7 +267,11 @@ namespace robot::tiago
         statistics_.last_execution_time = execution;
 
         // TODO:
-        // 后续补 max_execution_time / lateness / jitter。
+        //
+        // 后续补：
+        // - max_execution_time
+        // - lateness
+        // - jitter
 
         if (execution > config_.control_period)
         {
@@ -222,6 +302,10 @@ namespace robot::tiago
         // TODO:
         //
         // Fault 后控制循环当前仍继续。
-        // 后续统一处理 Fault propagation / safety behavior。
+        //
+        // 后续统一完成：
+        // - Controller fault propagation
+        // - Executor fault latching
+        // - safety behavior
     }
 }

@@ -43,18 +43,14 @@ namespace
                     complete = false;
                     break;
                 }
-
                 values[i] = *positions[i];
             }
-
             if (complete)
             {
                 return values;
             }
-
             std::this_thread::sleep_for(kFeedbackPollPeriod);
         }
-
         throw std::runtime_error(std::string("Timed out waiting for ") + name + " feedback");
     }
 
@@ -71,10 +67,8 @@ namespace
                 values[1] = *positions[1];
                 return values;
             }
-
             std::this_thread::sleep_for(kFeedbackPollPeriod);
         }
-
         throw std::runtime_error(std::string("Timed out waiting for ") + name + " feedback");
     }
 
@@ -91,10 +85,8 @@ namespace
                 values[1] = *positions[1];
                 return values;
             }
-
             std::this_thread::sleep_for(kFeedbackPollPeriod);
         }
-
         throw std::runtime_error("Timed out waiting for head feedback");
     }
 
@@ -108,10 +100,8 @@ namespace
             {
                 return *position;
             }
-
             std::this_thread::sleep_for(kFeedbackPollPeriod);
         }
-
         throw std::runtime_error("Timed out waiting for torso feedback");
     }
 
@@ -122,7 +112,6 @@ namespace
         {
             throw std::logic_error("Invalid arm config while building velocity limits");
         }
-
         return {shoulder.joints[0].limits.max_velocity, shoulder.joints[1].limits.max_velocity,
                 elbow.joints[0].limits.max_velocity,    elbow.joints[1].limits.max_velocity,
                 wrist.joints[0].limits.max_velocity,    wrist.joints[1].limits.max_velocity,
@@ -135,7 +124,6 @@ namespace
         {
             throw std::logic_error("Invalid gripper config while building velocity limits");
         }
-
         return {config.joints[0].limits.max_velocity, config.joints[1].limits.max_velocity};
     }
 
@@ -145,7 +133,6 @@ namespace
         {
             throw std::logic_error("Invalid head config while building velocity limits");
         }
-
         return {config.joints[0].limits.max_velocity, config.joints[1].limits.max_velocity};
     }
 } // namespace
@@ -153,9 +140,11 @@ namespace
 int main()
 {
     using namespace robot::tiago;
+
     try
     {
         robot::common::logger()->info("Robot startup");
+
         // ====================================================
         // 1. Load configuration
         // ====================================================
@@ -171,6 +160,7 @@ int main()
         const auto head_config = loadCanBusConfig("config/tiago/can/head.yaml");
         const auto torso_config = loadCanBusConfig("config/tiago/can/torso.yaml");
         const auto base_config = loadBaseConfig("config/tiago/base/base.yaml");
+
         // ====================================================
         // 2. Create hardware
         // ====================================================
@@ -182,6 +172,7 @@ int main()
         Head head(head_config);
         Torso torso(torso_config);
         Base base(base_config);
+
         // ====================================================
         // 3. Create controllers
         // ====================================================
@@ -193,12 +184,12 @@ int main()
         HeadController head_controller(head);
         TorsoController torso_controller(torso);
         BaseController base_controller(base);
+
         // ====================================================
         // 4. Hardware cleanup
         // ====================================================
 
-            // 每个清理动作独立容错，确保单个设备失败时其余设备仍会停机。
-            const auto shutdownHardware = [&]() noexcept
+        const auto shutdownHardware = [&]() noexcept
         {
             const auto safe = [](const char *name, auto &&action) noexcept
             {
@@ -250,8 +241,9 @@ int main()
             head.enable();
             torso.enable();
             base.enable();
+
             // =================================================
-            // 6. Read real current positions
+            // 6. Read current real position
             // =================================================
 
             robot::common::logger()->info("Waiting for current robot feedback");
@@ -262,8 +254,9 @@ int main()
             const auto head_position = waitHeadPositions(head);
             const double torso_position = waitTorsoPosition(torso);
             robot::common::logger()->info("Current robot feedback acquired");
+
             // =================================================
-            // 7. Velocity limits from YAML
+            // 7. Velocity limits
             // =================================================
 
             const auto left_arm_velocity =
@@ -274,8 +267,9 @@ int main()
             const auto right_gripper_velocity = gripperVelocityLimits(right_gripper_config);
             const auto head_velocity = headVelocityLimits(head_config);
             const double torso_velocity = torso_config.joints.at(0).limits.max_velocity;
+
             // =================================================
-            // 8. Start all controllers at real positions
+            // 8. Start controllers at real current position
             // =================================================
 
             left_arm_controller.start(left_arm_position, left_arm_velocity);
@@ -285,16 +279,14 @@ int main()
             head_controller.start(head_position, head_velocity);
             torso_controller.start(torso_position, torso_velocity);
             base_controller.start();
+
             // =================================================
-            // 9. Helper: choose a safe target
+            // 9. Small helpers
             // =================================================
 
-            // 优先向正方向移动 delta。
-            //
-            // 如果正方向接近限位，
-            // 则自动向负方向移动。
-            //
-            // 这样测试不依赖机器人初始姿态。
+            const auto absolute = [](double value) { return value < 0.0 ? -value : value; };
+
+            // 为普通旋转/直线关节选择一个安全偏移目标。
             const auto offsetWithinLimits = [](double current, const auto &joint_config, double delta)
             {
                 const double positive = current + delta;
@@ -302,396 +294,326 @@ int main()
                 {
                     return positive;
                 }
-
                 const double negative = current - delta;
                 if (negative >= joint_config.limits.min_position)
                 {
                     return negative;
                 }
-
                 throw std::runtime_error("Cannot build safe test target");
             };
-            // =================================================
-            // 10. Helper: manual controller loop
-            // =================================================
-            //
-            // IMPORTANT:
-            //
-            // 这里只能在 RobotControlExecutor 启动之前使用。
-            //
-            // 当前阶段 Gripper / Head / Torso / Base
-            // 的 Executor mailbox 尚未实现，
-            // 因此这里暂时由 main 单线程驱动 Controller。
-            //
-            // Executor 启动以后，
-            // main 不再直接访问 Controller。
-            // =================================================
 
-            const auto runManualControl = [&](std::chrono::milliseconds duration)
+            // 夹爪使用更大的动作幅度。
+            //
+            // 不采用固定 +/- 0.024，
+            // 因为机器人可能本来就在某个限位附近。
+            //
+            // 这里比较：
+            //   接近最大开度
+            //   接近最小开度
+            //
+            // 哪个距离当前位置更远，就选择哪个。
+            const auto buildLargeGripperTarget = [&](const Gripper::FingerValues &current, const CanBusConfig &config)
             {
-                auto next_cycle = std::chrono::steady_clock::now();
-                const auto end_time = next_cycle + duration;
-                while (std::chrono::steady_clock::now() < end_time)
+                constexpr double kLimitMargin = 0.003;
+                Gripper::FingerValues open_target{};
+                Gripper::FingerValues close_target{};
+                double open_distance = 0.0;
+                double close_distance = 0.0;
+                for (std::size_t i = 0; i < Gripper::kFingerCount; ++i)
                 {
-                    left_arm_controller.update();
-                    right_arm_controller.update();
-                    left_gripper_controller.update();
-                    right_gripper_controller.update();
-                    head_controller.update();
-                    torso_controller.update();
-                    base_controller.update();
-                    next_cycle += std::chrono::milliseconds{100};
-                    std::this_thread::sleep_until(next_cycle);
+                    open_target[i] = config.joints[i].limits.max_position - kLimitMargin;
+                    close_target[i] = config.joints[i].limits.min_position + kLimitMargin;
+                    open_distance += absolute(open_target[i] - current[i]);
+                    close_distance += absolute(close_target[i] - current[i]);
+                }
+                if (open_distance >= close_distance)
+                {
+                    return open_target;
+                }
+                return close_target;
+            };
+            const auto checkExecutor = [](RobotControlExecutor &executor, const char *stage)
+            {
+                if (executor.state() == RobotControlExecutor::State::Faulted)
+                {
+                    throw std::runtime_error(std::string("Executor fault during ") + stage + ": " +
+                                             executor.faultMessage());
                 }
             };
-            // 先跑几个周期。
-            runManualControl(std::chrono::milliseconds{300});
+
             // =================================================
-            // TEST 1
-            // Left gripper
-            // =================================================
-
-            robot::common::logger()->info("TEST 1: moving left gripper");
-            Gripper::FingerValues left_gripper_test = left_gripper_position;
-            // 两个 finger 保持同方向运动。
-            bool left_gripper_can_open = true;
-            for (std::size_t i = 0; i < Gripper::kFingerCount; ++i)
-            {
-                if (left_gripper_position[i] + 0.012 > left_gripper_config.joints[i].limits.max_position)
-                {
-                    left_gripper_can_open = false;
-                }
-            }
-
-            for (std::size_t i = 0; i < Gripper::kFingerCount; ++i)
-            {
-                if (left_gripper_can_open)
-                {
-                    left_gripper_test[i] = left_gripper_position[i] + 0.012 * 2;
-                }
-                else
-                {
-                    left_gripper_test[i] = left_gripper_position[i] - 0.012 * 2;
-                }
-            }
-
-            left_gripper_controller.setTarget(left_gripper_test, left_gripper_velocity);
-            runManualControl(std::chrono::milliseconds{800});
-            if (!left_gripper_controller.targetReached(0.004))
-            {
-                throw std::runtime_error("Left gripper did not reach test target");
-            }
-
-            // 回到启动位置。
-            left_gripper_controller.setTarget(left_gripper_position, left_gripper_velocity);
-            runManualControl(std::chrono::milliseconds{800});
-            robot::common::logger()->info("TEST 1 PASS: left gripper");
-            // =================================================
-            // TEST 2
-            // Right gripper
-            // =================================================
-
-            robot::common::logger()->info("TEST 2: moving right gripper");
-            Gripper::FingerValues right_gripper_test = right_gripper_position;
-            bool right_gripper_can_open = true;
-            for (std::size_t i = 0; i < Gripper::kFingerCount; ++i)
-            {
-                if (right_gripper_position[i] + 0.012 > right_gripper_config.joints[i].limits.max_position)
-                {
-                    right_gripper_can_open = false;
-                }
-            }
-
-            for (std::size_t i = 0; i < Gripper::kFingerCount; ++i)
-            {
-                if (right_gripper_can_open)
-                {
-                    right_gripper_test[i] = right_gripper_position[i] + 0.012 * 2;
-                }
-                else
-                {
-                    right_gripper_test[i] = right_gripper_position[i] - 0.012 * 2;
-                }
-            }
-
-            right_gripper_controller.setTarget(right_gripper_test, right_gripper_velocity);
-            runManualControl(std::chrono::milliseconds{800});
-            if (!right_gripper_controller.targetReached(0.004))
-            {
-                throw std::runtime_error("Right gripper did not reach test target");
-            }
-
-            right_gripper_controller.setTarget(right_gripper_position, right_gripper_velocity);
-            runManualControl(std::chrono::milliseconds{800});
-            robot::common::logger()->info("TEST 2 PASS: right gripper");
-            // =================================================
-            // TEST 3
-            // Head
-            // =================================================
-
-            robot::common::logger()->info("TEST 3: moving head");
-            Head::JointValues head_test = head_position;
-            // 只动 head joint 1。
-            head_test[0] = offsetWithinLimits(head_position[0], head_config.joints[0], 0.20);
-            head_controller.setTarget(head_test, head_velocity);
-            runManualControl(std::chrono::milliseconds{1500});
-            if (!head_controller.targetReached(0.03))
-            {
-                throw std::runtime_error("Head did not reach test target");
-            }
-
-            head_controller.setTarget(head_position, head_velocity);
-            runManualControl(std::chrono::milliseconds{1500});
-            robot::common::logger()->info("TEST 3 PASS: head");
-            // =================================================
-            // TEST 4
-            // Torso
-            // =================================================
-
-            robot::common::logger()->info("TEST 4: moving torso");
-            const double torso_test = offsetWithinLimits(torso_position, torso_config.joints.at(0), 0.05);
-            torso_controller.setTarget(torso_test, torso_velocity);
-            runManualControl(std::chrono::milliseconds{1400});
-            if (!torso_controller.targetReached(0.01))
-            {
-                throw std::runtime_error("Torso did not reach test target");
-            }
-
-            torso_controller.setTarget(torso_position, torso_velocity);
-            runManualControl(std::chrono::milliseconds{1400});
-            robot::common::logger()->info("TEST 4 PASS: torso");
-            // =================================================
-            // TEST 5
-            // Base
-            // =================================================
-
-            robot::common::logger()->info("TEST 5: moving base forward");
-            // YAML 限制是 0.30 m/s。
-            //
-            // 使用较保守的速度，
-            // 向前运行约 1 秒。
-            const double base_test_velocity = base_config.max_linear_velocity * 0.4;
-            base_controller.setTarget(base_test_velocity, 0.0);
-            runManualControl(std::chrono::milliseconds{1000});
-            // 底盘立即回到零速度目标。
-            base_controller.setTarget(0.0, 0.0);
-            runManualControl(std::chrono::milliseconds{400});
-            if (base_controller.state() != BaseController::ControlState::Running)
-            {
-                throw std::runtime_error("BaseController is not Running after test");
-            }
-
-            robot::common::logger()->info("TEST 5 PASS: base");
-            // =================================================
-            // Manual phase complete
-            // =================================================
-
-            robot::common::logger()->info("Manual component motion tests complete");
-            // =================================================
-            // 11. Start RobotControlExecutor
+            // 10. Executor startup
             // =================================================
 
             RobotControlExecutor::Config executor_config;
             executor_config.control_period = std::chrono::milliseconds{100};
             executor_config.command_timeout = std::chrono::milliseconds{500};
             {
-                RobotControlExecutor executor(
-                    left_arm_controller,
-                    right_arm_controller,
-                    left_gripper_controller,
-                    right_gripper_controller,
-                    head_controller,
-                    torso_controller,
-                    base_controller,
-                    executor_config);
+                RobotControlExecutor executor(left_arm_controller, right_arm_controller,
+                                              left_gripper_controller, right_gripper_controller,
+                                              head_controller, torso_controller,
+                                              base_controller,
+                                              executor_config);
                 executor.start();
-                robot::common::logger()->info("Arm Servo / Hold / Stop mailbox test started");
-                // 让 Executor 先运行几个周期，
-                // 保证 RobotState 和 Arm feedback 已刷新。
+                robot::common::logger()->info("Full Executor mailbox integration test started");
+
+                // 先让所有 Controller
+                // 在 Executor 中运行几个周期。
                 std::this_thread::sleep_for(std::chrono::milliseconds{500});
-                if (executor.state() == RobotControlExecutor::State::Faulted)
+                checkExecutor(executor, "startup");
+
+                // =================================================
+                // TEST 1
+                // Left Gripper
+                // =================================================
+
+                robot::common::logger()->info("TEST 1: large left gripper motion via Executor");
+                const auto left_gripper_test = buildLargeGripperTarget(left_gripper_position, left_gripper_config);
+                executor.setLeftGripperTarget(left_gripper_test, left_gripper_velocity);
+                std::this_thread::sleep_for(std::chrono::milliseconds{1500});
+                checkExecutor(executor, "left gripper");
                 {
-                    throw std::runtime_error(std::string("Executor fault before Arm test: ") + executor.faultMessage());
+                    const auto state = executor.latestState();
+                    for (std::size_t i = 0; i < Gripper::kFingerCount; ++i)
+                    {
+                        if (!state.left_gripper_positions[i])
+                        {
+                            throw std::runtime_error("Left gripper feedback unavailable");
+                        }
+                        if (absolute(*state.left_gripper_positions[i] - left_gripper_test[i]) > 0.005)
+                        {
+                            throw std::runtime_error("Left gripper did not reach large test target");
+                        }
+                    }
                 }
+
+                // 回到启动位置。
+                executor.setLeftGripperTarget(left_gripper_position, left_gripper_velocity);
+                std::this_thread::sleep_for(std::chrono::milliseconds{1500});
+                checkExecutor(executor, "left gripper return");
+                robot::common::logger()->info("TEST 1 PASS: left gripper mailbox");
+
+                // =================================================
+                // TEST 2
+                // Right Gripper
+                // =================================================
+
+                robot::common::logger()->info("TEST 2: large right gripper motion via Executor");
+                const auto right_gripper_test = buildLargeGripperTarget(right_gripper_position, right_gripper_config);
+                executor.setRightGripperTarget(right_gripper_test, right_gripper_velocity);
+                std::this_thread::sleep_for(std::chrono::milliseconds{1500});
+                checkExecutor(executor, "right gripper");
+                {
+                    const auto state = executor.latestState();
+                    for (std::size_t i = 0; i < Gripper::kFingerCount; ++i)
+                    {
+                        if (!state.right_gripper_positions[i])
+                        {
+                            throw std::runtime_error("Right gripper feedback unavailable");
+                        }
+                        if (absolute(*state.right_gripper_positions[i] - right_gripper_test[i]) > 0.005)
+                        {
+                            throw std::runtime_error("Right gripper did not reach large test target");
+                        }
+                    }
+                }
+                executor.setRightGripperTarget(right_gripper_position, right_gripper_velocity);
+                std::this_thread::sleep_for(std::chrono::milliseconds{1500});
+                checkExecutor(executor, "right gripper return");
+                robot::common::logger()->info("TEST 2 PASS: right gripper mailbox");
+
+                // =================================================
+                // TEST 3
+                // Head
+                // =================================================
+
+                robot::common::logger()->info("TEST 3: moving head via Executor");
+                Head::JointValues head_test = head_position;
+                head_test[0] = offsetWithinLimits(head_position[0], head_config.joints[0], 0.25);
+                executor.setHeadTarget(head_test, head_velocity);
+                std::this_thread::sleep_for(std::chrono::milliseconds{1800});
+                checkExecutor(executor, "head");
+                {
+                    const auto state = executor.latestState();
+                    if (!state.head_positions[0])
+                    {
+                        throw std::runtime_error("Head feedback unavailable");
+                    }
+                    if (absolute(*state.head_positions[0] - head_test[0]) > 0.04)
+                    {
+                        throw std::runtime_error("Head did not reach test target");
+                    }
+                }
+                executor.setHeadTarget(head_position, head_velocity);
+                std::this_thread::sleep_for(std::chrono::milliseconds{1800});
+                checkExecutor(executor, "head return");
+                robot::common::logger()->info("TEST 3 PASS: head mailbox");
+
+                // =================================================
+                // TEST 4
+                // Torso
+                // =================================================
+
+                robot::common::logger()->info("TEST 4: moving torso via Executor");
+                const double torso_test = offsetWithinLimits(torso_position, torso_config.joints.at(0), 0.06);
+                executor.setTorsoTarget(torso_test, torso_velocity);
+                std::this_thread::sleep_for(std::chrono::milliseconds{1600});
+                checkExecutor(executor, "torso");
+                {
+                    const auto state = executor.latestState();
+                    if (!state.torso_position)
+                    {
+                        throw std::runtime_error("Torso feedback unavailable");
+                    }
+                    if (absolute(*state.torso_position - torso_test) > 0.012)
+                    {
+                        throw std::runtime_error("Torso did not reach test target");
+                    }
+                }
+                executor.setTorsoTarget(torso_position, torso_velocity);
+                std::this_thread::sleep_for(std::chrono::milliseconds{1600});
+                checkExecutor(executor, "torso return");
+                robot::common::logger()->info("TEST 4 PASS: torso mailbox");
+
+                // =================================================
+                // TEST 5
+                // Base
+                // =================================================
+
+                robot::common::logger()->info("TEST 5: moving base via Executor");
+
+                // 比之前稍明显一点。
+                //
+                // YAML 上限 0.30 m/s，
+                // 这里使用 40%。
+                const double base_velocity = base_config.max_linear_velocity * 0.4;
+                executor.setBaseVelocity(base_velocity, 0.0);
+                std::this_thread::sleep_for(std::chrono::milliseconds{1500});
+                checkExecutor(executor, "base movement");
+
+                // 回零速度。
+                executor.setBaseVelocity(0.0, 0.0);
+                std::this_thread::sleep_for(std::chrono::milliseconds{500});
+                checkExecutor(executor, "base stop");
+                {
+                    const auto state = executor.latestState();
+                    if (state.base_state != BaseController::ControlState::Running)
+                    {
+                        throw std::runtime_error("BaseController is not Running");
+                    }
+                }
+                robot::common::logger()->info("TEST 5 PASS: base mailbox");
 
                 // =================================================
                 // TEST 6
-                // Arm Servo movement
+                // Arm Servo
                 // =================================================
 
-                robot::common::logger()->info("TEST 6: moving both arms with Servo");
+                robot::common::logger()->info("TEST 6: moving both arms via Servo mailbox");
                 Arm::JointValues left_servo_target = left_arm_position;
                 Arm::JointValues right_servo_target = right_arm_position;
-                // 两条机械臂都只移动 joint 1。
+
+                // 两边只移动 joint 1。
                 //
-                // 0.25 rad 约 14 度，
-                // Webots 中应该比较容易看到。
+                // 0.25 rad 在 Webots 中应该比较明显。
                 left_servo_target[0] = offsetWithinLimits(left_arm_position[0], left_shoulder_config.joints[0], 0.25);
                 right_servo_target[0] =
                     offsetWithinLimits(right_arm_position[0], right_shoulder_config.joints[0], 0.25);
-                // 目标来源切换为 Servo。
+
+                // mode 和 Servo target 可以在同一个
+                // mailbox 周期提交。
+                //
+                // Executor processArmCommands()
+                // 会先处理 mode，再处理 Servo target。
                 executor.setLeftArmControlMode(RobotControlExecutor::ArmControlMode::Servo);
                 executor.setRightArmControlMode(RobotControlExecutor::ArmControlMode::Servo);
-                // 提交 Servo 目标。
                 executor.setLeftArmServoTarget(left_servo_target, left_arm_velocity);
                 executor.setRightArmServoTarget(right_servo_target, right_arm_velocity);
-                // 故意不等待到最终目标。
+
+                // 不等到目标完全到达。
                 //
-                // 让机械臂运动到一半，
-                // 后面直接测试 Hold。
+                // 后面测试运动中 Hold。
                 std::this_thread::sleep_for(std::chrono::milliseconds{700});
-                if (executor.state() == RobotControlExecutor::State::Faulted)
-                {
-                    throw std::runtime_error(std::string("Executor fault during Servo: ") + executor.faultMessage());
-                }
-
+                checkExecutor(executor, "Arm Servo");
                 const auto moving_state = executor.latestState();
-                // 确认真正发生过运动。
-                double left_arm_motion = 0.0;
-                double right_arm_motion = 0.0;
-                for (std::size_t i = 0; i < Arm::kJointCount; ++i)
+                if (!moving_state.left_arm_positions[0] || !moving_state.right_arm_positions[0])
                 {
-                    if (!moving_state.left_arm_positions[i] || !moving_state.right_arm_positions[i])
-                    {
-                        throw std::runtime_error("Arm feedback unavailable during Servo");
-                    }
-
-                    double left_difference = *moving_state.left_arm_positions[i] - left_arm_position[i];
-                    if (left_difference < 0.0)
-                    {
-                        left_difference = -left_difference;
-                    }
-
-                    double right_difference = *moving_state.right_arm_positions[i] - right_arm_position[i];
-                    if (right_difference < 0.0)
-                    {
-                        right_difference = -right_difference;
-                    }
-
-                    if (left_difference > left_arm_motion)
-                    {
-                        left_arm_motion = left_difference;
-                    }
-
-                    if (right_difference > right_arm_motion)
-                    {
-                        right_arm_motion = right_difference;
-                    }
+                    throw std::runtime_error("Arm feedback unavailable during Servo");
                 }
-
-                if (left_arm_motion < 0.02)
+                const double left_motion = absolute(*moving_state.left_arm_positions[0] - left_arm_position[0]);
+                const double right_motion = absolute(*moving_state.right_arm_positions[0] - right_arm_position[0]);
+                if (left_motion < 0.02)
                 {
-                    throw std::runtime_error("Left arm did not visibly move");
+                    throw std::runtime_error("Left arm did not move");
                 }
-
-                if (right_arm_motion < 0.02)
+                if (right_motion < 0.02)
                 {
-                    throw std::runtime_error("Right arm did not visibly move");
+                    throw std::runtime_error("Right arm did not move");
                 }
+                robot::common::logger()->info("TEST 6 PASS: Arm Servo mailbox");
 
-                robot::common::logger()->info("TEST 6 PASS: both arms moved");
                 // =================================================
                 // TEST 7
-                // Hold while moving
+                // Hold
                 // =================================================
 
-                robot::common::logger()->info("TEST 7: submitting Hold while arms are moving");
+                robot::common::logger()->info("TEST 7: Hold both arms while moving");
                 executor.holdLeftArm();
                 executor.holdRightArm();
-                // 等待 Hold 被 mailbox 消费。
-                std::this_thread::sleep_for(std::chrono::milliseconds{300});
-                if (executor.state() == RobotControlExecutor::State::Faulted)
-                {
-                    throw std::runtime_error(std::string("Executor fault during Hold: ") + executor.faultMessage());
-                }
 
+                // 先等 Hold 生效并稳定一下。
+                std::this_thread::sleep_for(std::chrono::milliseconds{300});
+                checkExecutor(executor, "Arm Hold");
                 const auto hold_state_1 = executor.latestState();
-                // Hold 后 Controller 必须继续 Running。
                 if (hold_state_1.left_arm_state != ArmController::ControlState::Running ||
                     hold_state_1.right_arm_state != ArmController::ControlState::Running)
                 {
                     throw std::runtime_error("ArmController is not Running during Hold");
                 }
-
-                // 再保持一段时间。
-                //
-                // 如果旧 Servo target 没有被清掉，
-                // 机器人会继续运动。
                 std::this_thread::sleep_for(std::chrono::milliseconds{700});
+                checkExecutor(executor, "Arm Hold stability");
                 const auto hold_state_2 = executor.latestState();
-                double left_hold_drift = 0.0;
-                double right_hold_drift = 0.0;
-                for (std::size_t i = 0; i < Arm::kJointCount; ++i)
+                if (!hold_state_1.left_arm_positions[0] || !hold_state_2.left_arm_positions[0] ||
+                    !hold_state_1.right_arm_positions[0] || !hold_state_2.right_arm_positions[0])
                 {
-                    if (!hold_state_1.left_arm_positions[i] || !hold_state_2.left_arm_positions[i] ||
-                        !hold_state_1.right_arm_positions[i] || !hold_state_2.right_arm_positions[i])
-                    {
-                        throw std::runtime_error("Arm feedback unavailable during Hold");
-                    }
-
-                    double left_difference = *hold_state_2.left_arm_positions[i] - *hold_state_1.left_arm_positions[i];
-                    if (left_difference < 0.0)
-                    {
-                        left_difference = -left_difference;
-                    }
-
-                    double right_difference =
-                        *hold_state_2.right_arm_positions[i] - *hold_state_1.right_arm_positions[i];
-                    if (right_difference < 0.0)
-                    {
-                        right_difference = -right_difference;
-                    }
-
-                    if (left_difference > left_hold_drift)
-                    {
-                        left_hold_drift = left_difference;
-                    }
-
-                    if (right_difference > right_hold_drift)
-                    {
-                        right_hold_drift = right_difference;
-                    }
+                    throw std::runtime_error("Arm feedback unavailable during Hold");
                 }
-
-                // 这里允许 0.03 rad 的反馈误差。
-                //
-                // 如果 Hold 后仍继续朝原 Servo target 运动，
-                // 700 ms 内会明显超过这个量。
+                const double left_hold_drift =
+                    absolute(*hold_state_2.left_arm_positions[0] - *hold_state_1.left_arm_positions[0]);
+                const double right_hold_drift =
+                    absolute(*hold_state_2.right_arm_positions[0] - *hold_state_1.right_arm_positions[0]);
                 if (left_hold_drift > 0.03)
                 {
                     throw std::runtime_error("Left arm continued moving after Hold");
                 }
-
                 if (right_hold_drift > 0.03)
                 {
                     throw std::runtime_error("Right arm continued moving after Hold");
                 }
+                robot::common::logger()->info("TEST 7 PASS: Arm Hold mailbox");
 
-                robot::common::logger()->info("TEST 7 PASS: Hold stopped motion and maintained position");
                 // =================================================
                 // TEST 8
-                // Stop
+                // Arm Stop
                 // =================================================
 
-                robot::common::logger()->info("TEST 8: submitting Arm Stop");
+                robot::common::logger()->info("TEST 8: stopping both arms");
                 executor.stopLeftArm();
                 executor.stopRightArm();
                 std::this_thread::sleep_for(std::chrono::milliseconds{500});
-                if (executor.state() == RobotControlExecutor::State::Faulted)
+                checkExecutor(executor, "Arm Stop");
                 {
-                    throw std::runtime_error(std::string("Executor fault during Stop: ") + executor.faultMessage());
+                    const auto state = executor.latestState();
+                    if (state.left_arm_state != ArmController::ControlState::Idle ||
+                        state.right_arm_state != ArmController::ControlState::Idle)
+                    {
+                        throw std::runtime_error("ArmControllers did not enter Idle");
+                    }
                 }
+                robot::common::logger()->info("TEST 8 PASS: Arm Stop mailbox");
 
-                const auto stop_state = executor.latestState();
-                if (stop_state.left_arm_state != ArmController::ControlState::Idle ||
-                    stop_state.right_arm_state != ArmController::ControlState::Idle)
-                {
-                    throw std::runtime_error("ArmControllers did not enter Idle after Stop");
-                }
-
-                robot::common::logger()->info("TEST 8 PASS: Arm Stop");
                 // =================================================
-                // 12. Final statistics
+                // 11. Final result
                 // =================================================
 
                 const auto statistics = executor.statistics();
@@ -699,16 +621,16 @@ int main()
                     std::chrono::duration_cast<std::chrono::microseconds>(statistics.last_execution_time).count();
                 std::cout << "\n"
                           << "====================================\n"
-                          << "ROBOT COMPONENT INTEGRATION TEST\n"
+                          << "FULL EXECUTOR MAILBOX TEST\n"
                           << "====================================\n"
-                          << "Left gripper:          PASS\n"
-                          << "Right gripper:         PASS\n"
-                          << "Head:                  PASS\n"
-                          << "Torso:                 PASS\n"
-                          << "Base:                  PASS\n"
-                          << "Left / Right Arm Servo:PASS\n"
-                          << "Arm Hold mailbox:      PASS\n"
-                          << "Arm Stop mailbox:      PASS\n"
+                          << "Left gripper:     PASS\n"
+                          << "Right gripper:    PASS\n"
+                          << "Head:             PASS\n"
+                          << "Torso:            PASS\n"
+                          << "Base:             PASS\n"
+                          << "Arm Servo:        PASS\n"
+                          << "Arm Hold:         PASS\n"
+                          << "Arm Stop:         PASS\n"
                           << "------------------------------------\n"
                           << "Cycle count: " << statistics.cycle_count << '\n'
                           << "Last execution: " << last_execution_us << " us\n"
@@ -719,7 +641,7 @@ int main()
             }
 
             // =================================================
-            // 13. Hardware shutdown
+            // 12. Hardware shutdown
             // =================================================
 
             shutdownHardware();

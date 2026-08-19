@@ -506,8 +506,8 @@ int main()
                 // 两边只移动 joint 1。
                 //
                 // 0.25 rad 在 Webots 中应该比较明显。
-                left_servo_target[0] = offsetWithinLimits(left_arm_position[0], left_shoulder_config.joints[0], 0.25);
-                right_servo_target[0] = offsetWithinLimits(right_arm_position[0], right_shoulder_config.joints[0], 0.25);
+                left_servo_target[0] = offsetWithinLimits(left_arm_position[0], left_shoulder_config.joints[0], 0.25 * 2);
+                right_servo_target[0] = offsetWithinLimits(right_arm_position[0], right_shoulder_config.joints[0], 0.25 * 2 * 2);
 
                 // mode 和 Servo target 可以在同一个 mailbox 周期提交。
                 //

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "ti5/config/config.hpp"
+#include "ti5/config.hpp"
 
 #include <filesystem>
 

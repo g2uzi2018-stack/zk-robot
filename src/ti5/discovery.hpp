@@ -1,8 +1,7 @@
 #pragma once
 
-#include "ti5/config/config.hpp"
+#include "ti5/config.hpp"
 
-#include <chrono>
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -10,21 +9,6 @@
 
 namespace robot::ti5
 {
-    // Discovery 原型沿用独立配置层的逻辑总线对象，不反向引入运行时依赖。
-    using LogicalCanBus = LogicalCanBusConfig;
-
-    // Discovery 使用的运行时参数。该结构不依赖 YAML，便于协议和扫描逻辑独立演进。
-    struct DiscoveryOptions
-    {
-        std::string interface_regex;
-        bool require_interface_up{true};
-        std::chrono::milliseconds response_timeout{50};
-        std::size_t confirmations_required{3};
-        std::size_t max_attempts{5};
-        bool allow_partial_bus{false};
-        bool require_unique_bus_match{true};
-    };
-
     struct InterfaceDiscoveryResult
     {
         std::string interface_name;

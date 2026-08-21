@@ -149,9 +149,9 @@ namespace
             }
             catch (const std::exception &error)
             {
-                robot::common::logger()->warn("Ignoring CAN interface {} with invalid numeric suffix: {}",
-                                              interface_name,
-                                              error.what());
+                robot::common::logger()->debug("Ignoring CAN interface {} with invalid numeric suffix: {}",
+                                               interface_name,
+                                               error.what());
                 continue;
             }
 
@@ -192,22 +192,16 @@ namespace
             {
             }
 
-            std::map<std::uint16_t, std::size_t> confirmation_counts;
+            std::map<std::uint16_t, std::size_t> consecutive_confirmation_counts;
             for (const auto node_id : all_expected_node_ids)
             {
-                confirmation_counts.emplace(node_id, 0);
+                consecutive_confirmation_counts.emplace(node_id, 0);
             }
 
             for (std::size_t attempt = 1; attempt <= options.max_attempts; ++attempt)
             {
-                std::vector<std::uint16_t> nodes_to_query;
-                for (const auto node_id : all_expected_node_ids)
-                {
-                    if (confirmation_counts[node_id] < options.confirmations_required)
-                    {
-                        nodes_to_query.push_back(node_id);
-                    }
-                }
+                // 每一轮都查询全部节点，才能让本轮没有有效响应的节点连续确认计数清零。
+                const auto &nodes_to_query = all_expected_node_ids;
 
                 if (nodes_to_query.empty())
                 {
@@ -262,13 +256,24 @@ namespace
                     }
                 }
 
-                for (const auto node_id : responded_this_attempt)
+                for (const auto node_id : all_expected_node_ids)
                 {
-                    ++confirmation_counts[node_id];
+                    auto &confirmation_count = consecutive_confirmation_counts[node_id];
+                    if (responded_this_attempt.find(node_id) != responded_this_attempt.end())
+                    {
+                        if (confirmation_count < options.confirmations_required)
+                        {
+                            ++confirmation_count;
+                        }
+                    }
+                    else
+                    {
+                        confirmation_count = 0;
+                    }
                 }
 
                 std::vector<std::uint16_t> confirmed_node_ids;
-                for (const auto &[node_id, count] : confirmation_counts)
+                for (const auto &[node_id, count] : consecutive_confirmation_counts)
                 {
                     if (count >= options.confirmations_required)
                     {
@@ -285,25 +290,38 @@ namespace
                     }
                 }
 
-                robot::common::logger()->debug("CAN interface {} attempt {}/{} received {} responses; confirmed nodes: {}{}",
+                robot::common::logger()->debug("CAN interface {} scan round {}/{} received {} valid responses; consecutive confirmed nodes: {}",
                                               interface_name,
                                               attempt,
                                               options.max_attempts,
                                               responded_this_attempt.size(),
-                                              formatNodeIds(confirmed_node_ids),
-                                              timed_out ? " (timeout)" : "");
+                                              formatNodeIds(confirmed_node_ids));
 
-                if (attempt < options.max_attempts && responded_this_attempt.size() < nodes_to_query.size())
+                if (timed_out)
                 {
-                    robot::common::logger()->warn("CAN interface {} discovery attempt {}/{} needs retry; missing responses for {}",
-                                                  interface_name,
-                                                  attempt,
-                                                  options.max_attempts,
-                                                  formatNodeIds(missing_node_ids));
+                    robot::common::logger()->debug("CAN interface {} scan round {}/{} timed out after {} ms",
+                                                   interface_name,
+                                                   attempt,
+                                                   options.max_attempts,
+                                                   options.response_timeout.count());
+                }
+                robot::common::logger()->debug("CAN interface {} scan round {}/{} missing valid responses for {}",
+                                               interface_name,
+                                               attempt,
+                                               options.max_attempts,
+                                               formatNodeIds(missing_node_ids));
+
+                if (attempt < options.max_attempts && !missing_node_ids.empty())
+                {
+                    robot::common::logger()->debug("CAN interface {} retrying scan round {}/{} after missing responses for {}",
+                                                   interface_name,
+                                                   attempt + 1,
+                                                   options.max_attempts,
+                                                   formatNodeIds(missing_node_ids));
                 }
             }
 
-            for (const auto &[node_id, count] : confirmation_counts)
+            for (const auto &[node_id, count] : consecutive_confirmation_counts)
             {
                 if (count >= options.confirmations_required)
                 {
@@ -400,7 +418,7 @@ namespace robot::ti5
 
         if (result.interfaces.empty())
         {
-            robot::common::logger()->warn("No UP CAN interface matching {} was found", options.interface_regex);
+            robot::common::logger()->debug("No UP CAN interface matching {} was found", options.interface_regex);
         }
 
         std::vector<std::size_t> assigned_interface(logical_buses.size(), logical_buses.size());
@@ -422,9 +440,9 @@ namespace robot::ti5
 
             if (candidates.empty())
             {
-                robot::common::logger()->warn("CAN interface {} did not match any complete logical bus; confirmed nodes: {}",
-                                              interface_result.interface_name,
-                                              formatNodeIds(interface_result.confirmed_node_ids));
+                robot::common::logger()->debug("CAN interface {} did not match any complete logical bus; confirmed nodes: {}",
+                                               interface_result.interface_name,
+                                               formatNodeIds(interface_result.confirmed_node_ids));
                 continue;
             }
 
@@ -492,7 +510,8 @@ namespace robot::ti5
             bus_result.matched_node_ids = std::move(best_matched_node_ids);
             bus_result.missing_node_ids = missingNodeIds(logical_buses[bus_index].expected_node_ids,
                                                           bus_result.matched_node_ids);
-            if (best_interface != nullptr)
+            const bool bus_required = logical_buses[bus_index].required || !options.allow_partial_bus;
+            if (best_interface != nullptr && !bus_conflict[bus_index])
             {
                 bus_result.interface_name = best_interface->interface_name;
                 robot::common::logger()->warn("Logical bus {} is incomplete on every interface; best interface {} matched nodes {} and is missing nodes {}",
@@ -501,26 +520,29 @@ namespace robot::ti5
                                               formatNodeIds(bus_result.matched_node_ids),
                                               formatNodeIds(bus_result.missing_node_ids));
             }
-            else
+            else if (best_interface != nullptr)
             {
-                robot::common::logger()->warn("Logical bus {} is missing nodes {}; no CAN interface responded",
-                                              bus_result.bus_name,
-                                              formatNodeIds(bus_result.missing_node_ids));
+                bus_result.interface_name = best_interface->interface_name;
             }
 
-            if (logical_buses[bus_index].required || !options.allow_partial_bus)
+            if (bus_required && !bus_conflict[bus_index])
             {
                 unique_match_failure = true;
+                robot::common::logger()->error("Required logical bus {} has no complete mapping; matched node IDs [{}], missing node IDs [{}]",
+                                               bus_result.bus_name,
+                                               formatNodeIds(bus_result.matched_node_ids),
+                                               formatNodeIds(bus_result.missing_node_ids));
+            }
+            else if (best_interface == nullptr && !bus_conflict[bus_index])
+            {
+                robot::common::logger()->warn("Logical bus {} has no responding CAN interface; missing nodes {}",
+                                              bus_result.bus_name,
+                                              formatNodeIds(bus_result.missing_node_ids));
             }
             result.logical_buses.push_back(std::move(bus_result));
         }
 
         result.success = !unique_match_failure;
-        if (!result.success)
-        {
-            robot::common::logger()->error("TI5 CAN Discovery failed; at least one logical bus is incomplete or ambiguous");
-            return result;
-        }
 
         for (const auto &bus_result : result.logical_buses)
         {
@@ -530,6 +552,12 @@ namespace robot::ti5
                                              bus_result.bus_name,
                                              *bus_result.interface_name);
             }
+        }
+
+        if (!result.success)
+        {
+            robot::common::logger()->error("TI5 CAN Discovery failed; at least one logical bus is incomplete or ambiguous");
+            return result;
         }
         return result;
     }

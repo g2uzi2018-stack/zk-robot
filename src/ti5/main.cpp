@@ -2,70 +2,8 @@
 #include "ti5/config_loader.hpp"
 #include "ti5/discovery.hpp"
 
-#include <cstddef>
-#include <cstdint>
-#include <filesystem>
 #include <exception>
-#include <sstream>
-#include <string>
-#include <vector>
-
-namespace
-{
-    std::string formatNodeIds(const std::vector<std::uint16_t> &node_ids)
-    {
-        if (node_ids.empty())
-        {
-            return "<none>";
-        }
-
-        std::ostringstream output;
-        for (std::size_t i = 0; i < node_ids.size(); ++i)
-        {
-            if (i != 0)
-            {
-                output << ',';
-            }
-            output << node_ids[i];
-        }
-        return output.str();
-    }
-
-    void printDiscoverySummary(const robot::ti5::DiscoveryResult &result)
-    {
-        for (const auto &interface_result : result.interfaces)
-        {
-            if (!interface_result.error.empty())
-            {
-                robot::common::logger()->error("Scan result {}: ERROR {}",
-                                               interface_result.interface_name,
-                                               interface_result.error);
-            }
-            else
-            {
-                robot::common::logger()->info("Scan result {}: confirmed node IDs [{}]",
-                                             interface_result.interface_name,
-                                             formatNodeIds(interface_result.confirmed_node_ids));
-            }
-        }
-
-        for (const auto &bus_result : result.logical_buses)
-        {
-            if (bus_result.complete && bus_result.interface_name)
-            {
-                robot::common::logger()->info("Logical bus mapping: {} -> {}",
-                                             bus_result.bus_name,
-                                             *bus_result.interface_name);
-            }
-            else
-            {
-                robot::common::logger()->error("Logical bus {} has no complete mapping; missing node IDs [{}]",
-                                               bus_result.bus_name,
-                                               formatNodeIds(bus_result.missing_node_ids));
-            }
-        }
-    }
-}
+#include <filesystem>
 
 int main(int argc, char **argv)
 {
@@ -90,7 +28,6 @@ int main(int argc, char **argv)
 
         const robot::ti5::CanDiscovery discovery;
         const auto result = discovery.discover(robot_config.can_buses, discovery_options);
-        printDiscoverySummary(result);
 
         if (!result.success)
         {

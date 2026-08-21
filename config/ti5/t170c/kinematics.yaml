@@ -1,0 +1,92 @@
+schema_version: 1
+
+# 当前统一采用：
+#
+# motor_rad = model_q * direct + offset_rad
+#
+# 反向换算：
+#
+# model_q = (motor_rad - offset_rad) / direct
+#
+# 这些 direct/offset 属于特定运动学模型坐标约定，
+# 绝不能重新作为 CAN encoder direction/zero_offset 使用。
+
+models:
+  t7_t170_right_arm:
+    joints:
+      - name: right_shoulder_pitch
+        direct: 1.0
+        offset_rad: 0.0
+
+      - name: right_shoulder_roll
+        direct: 1.0
+        offset_rad: 1.5707963267948966
+
+      - name: right_shoulder_yaw
+        direct: 1.0
+        offset_rad: 0.0
+
+      - name: right_elbow_yaw
+        direct: 1.0
+        offset_rad: 0.0
+
+      - name: right_wrist_pitch
+        direct: 1.0
+        offset_rad: 0.0
+
+      - name: right_wrist_yaw
+        direct: 1.0
+        offset_rad: 0.0
+
+      - name: right_wrist_roll
+        direct: 1.0
+        offset_rad: 0.0
+
+  t7_t170_left_arm:
+    joints:
+      - name: left_shoulder_pitch
+        direct: -1.0
+        offset_rad: 0.0
+
+      - name: left_shoulder_roll
+        direct: 1.0
+        offset_rad: -1.5707963267948966
+
+      - name: left_shoulder_yaw
+        direct: 1.0
+        offset_rad: 0.0
+
+      - name: left_elbow_yaw
+        direct: -1.0
+        offset_rad: 0.0
+
+      - name: left_wrist_pitch
+        direct: 1.0
+        offset_rad: 0.0
+
+      - name: left_wrist_yaw
+        direct: -1.0
+        offset_rad: 0.0
+
+      - name: left_wrist_roll
+        direct: 1.0
+        offset_rad: 0.0
+
+  folded_leg_3r:
+    # 当前三折叠求解器只使用 ID 4/3/2，
+    # 即 Fold_P1 / Fold_P2 / Fold_P3，不包含 Fold_R。
+    joints:
+      - name: fold_p1
+        direct: -1.0
+
+        # 原现有求解器使用的就是 1.57。
+        # 在完成 FK 对齐验证之前不要擅自改成精确 π/2。
+        offset_rad: 1.57
+
+      - name: fold_p2
+        direct: -1.0
+        offset_rad: 0.0
+
+      - name: fold_p3
+        direct: 1.0
+        offset_rad: 0.0

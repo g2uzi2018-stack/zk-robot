@@ -1,410 +1,209 @@
-# T170C 型号级的机器人拓扑和物理关节映射。
-# 本文件描述“有哪些实体电机、它们属于哪个逻辑分区以及如何解码位置”；
-# 不在这里保存某次启动实际对应的 Linux canX 名称，也不保存某一台机器人
-# 的装配零点。后两类信息分别由自动发现和 calibration.yaml 负责。
-#
-# schema_version 用于让加载器选择兼容的配置格式。格式升级时应同步更新
-# 解析器和校验逻辑；它不是机器人固件版本，也不是 CAN 协议版本。
 schema_version: 1
 
 robot:
-  # vendor/model 用于选择厂商和型号对应的协议、拓扑及默认校验规则。
-  # 这两个字段是型号身份，不应因为单台机器的序列号或装配差异而修改。
   vendor: TI5
   model: T170C
-
-  # 本体一体化关节的实体电机数量：5（腰部/折叠）+3（头部）
-  # +7（左臂）+7（右臂）。不包含左右傲意灵巧手控制器。
-  # ID 2 虽然有两个业务语义，仍只计为一台实体电机。
+  # 仅统计本体一体化关节，不包含左右傲意灵巧手控制器。
   body_motor_count: 22
 
-# 这里的 bus 是“逻辑物理总线分区”，不是 Linux 的 can0/can1 等接口名。
-# Linux SocketCAN 接口名可能在重启、USB/PCIe 设备枚举顺序变化后改变，
-# 因此不能把 can0 等名称硬编码为 T170C 的永久属性；启动时由 can.yaml
-# 根据这些固定 node ID 自动确定 logical bus -> 当前 Linux canX 的映射。
+# 这里定义的是机器人固定的“逻辑 CAN 分区”。
+# Linux 的 can0/can1/... 会随设备枚举变化，因此绝不能写死在本文件中。
+# 程序启动后通过 node ID 自动发现实际 Linux CAN 接口。
 can_buses:
-
   - name: waist_fold
-    # protocol 表示该分区内设备采用的 CAN 应用层协议，由 C++ 协议实现解释。
-    # 它不是 SocketCAN 链路类型，也不应在 YAML 中展开成具体命令字。
     protocol: ti5_joint
-    # required=true 表示本体控制启动前必须发现这个完整分区。
     required: true
-    # 这些是该物理分区期望出现的固定电机 CAN ID，不是 Linux 接口编号。
     expected_node_ids: [1, 2, 3, 4, 5]
 
   - name: head
     protocol: ti5_joint
     required: true
-    # 头/颈分区的固定节点；启动时用它们反查当前实际 SocketCAN 接口。
     expected_node_ids: [30, 31, 32]
 
   - name: left_arm
     protocol: ti5_joint
     required: true
-    # 左臂对应的逻辑 CAN 分区；这里不保存 can0/can1 等 Linux 名称。
     expected_node_ids: [23, 24, 25, 26, 27, 28, 29]
 
   - name: right_arm
     protocol: ti5_joint
     required: true
-    # 右臂的固定电机 CAN ID；ID 与实际接口的组合才唯一标识一个物理节点。
     expected_node_ids: [16, 17, 18, 19, 20, 21, 22]
 
-# 每个 joints 条目对应一台实体电机，并以 name 作为程序内部稳定的关节键。
-# physical_name 是厂家/物理装配名称，用于和协议文档、铭牌及抓包记录对照；
-# name 可以被业务层引用，但不能把同一实体电机拆成两个 Motor 对象。
-# bus 指向上面的逻辑物理分区，不是 Linux canX；motor.node_id 是该电机的
-# 固定 CAN ID。unit=radian 表示关节角和目标角统一使用 rad。
-# encoder.type=dual 表示当前 T170C 的双编码器；position_reference=output
-# 表示位置计数在执行器输出端定义。当前双编码器位置使用
-# counts_per_output_revolution=262144 count/输出端一圈。
-# gear_ratio=101.0 仍是执行器机械参数，主要用于速度等电机端量的换算；
-# 双编码器位置已经是输出端计数，位置换算不能错误地再次除以 101。
+# T170C 本体当前均为双编码器。
+# CAN position 是输出端位置，262144 count 对应输出轴一圈。
+# 因此位置换算直接使用 raw_count * 2π / 262144，
+# 不要因为 gear_ratio=101 再对位置除一次减速比。
+encoder_defaults:
+  type: dual
+  position_reference: output
+  counts_per_output_revolution: 262144
+  gear_ratio: 101.0
+
 joints:
-
-  # ============================================================
-  # 腰部 / 折叠（Waist / Fold）
-  # ============================================================
-
+  # Waist / Fold
   - name: waist_yaw
     physical_name: WAIST_Y
     bus: waist_fold
-
     motor:
       node_id: 1
       unit: radian
 
-      encoder:
-        type: dual
-        position_reference: output
-        counts_per_output_revolution: 262144
-        gear_ratio: 101.0
-
+  # ID 2 是唯一一台实体电机，同时可能被 waist_pitch 和 Fold 业务引用。
+  # 运行时只能创建一个 Motor，由上层做共享轴所有权仲裁。
   - name: fold_p3
     physical_name: Fold_P3
     bus: waist_fold
-
-    # node_id 2 只有一个实体电机，却同时可能被 waist_pitch 和 Fold
-    # 业务语义引用。不能因为两个业务名称创建两个 Motor 实例；
-    # 后续必须由共享轴所有权仲裁决定当前目标来源，详见 shared_axes
-    # 和 safety.yaml 的 shared_axis_control。
     motor:
       node_id: 2
       unit: radian
 
-      encoder:
-        type: dual
-        position_reference: output
-        counts_per_output_revolution: 262144
-        gear_ratio: 101.0
-
   - name: fold_p2
     physical_name: Fold_P2
     bus: waist_fold
-
     motor:
       node_id: 3
       unit: radian
 
-      encoder:
-        type: dual
-        position_reference: output
-        counts_per_output_revolution: 262144
-        gear_ratio: 101.0
-
   - name: fold_p1
     physical_name: Fold_P1
     bus: waist_fold
-
     motor:
       node_id: 4
       unit: radian
 
-      encoder:
-        type: dual
-        position_reference: output
-        counts_per_output_revolution: 262144
-        gear_ratio: 101.0
-
   - name: fold_r
     physical_name: Fold_R
     bus: waist_fold
-
     motor:
       node_id: 5
       unit: radian
 
-      encoder:
-        type: dual
-        position_reference: output
-        counts_per_output_revolution: 262144
-        gear_ratio: 101.0
-
-  # ============================================================
-  # 头部（Head）
-  # ============================================================
-
+  # Head
   - name: neck_yaw
     physical_name: NECK_Y
     bus: head
-
     motor:
       node_id: 30
       unit: radian
 
-      encoder:
-        type: dual
-        position_reference: output
-        counts_per_output_revolution: 262144
-        gear_ratio: 101.0
-
   - name: neck_pitch
     physical_name: NECK_P
     bus: head
-
     motor:
       node_id: 31
       unit: radian
 
-      encoder:
-        type: dual
-        position_reference: output
-        counts_per_output_revolution: 262144
-        gear_ratio: 101.0
-
   - name: neck_roll
     physical_name: NECK_R
     bus: head
-
     motor:
       node_id: 32
       unit: radian
 
-      encoder:
-        type: dual
-        position_reference: output
-        counts_per_output_revolution: 262144
-        gear_ratio: 101.0
-
-  # ============================================================
-  # 左臂（Left Arm）
-  # ============================================================
-
+  # Left Arm
   - name: left_shoulder_pitch
     physical_name: L_SHOULDER_P
     bus: left_arm
-
     motor:
       node_id: 23
       unit: radian
 
-      encoder:
-        type: dual
-        position_reference: output
-        counts_per_output_revolution: 262144
-        gear_ratio: 101.0
-
   - name: left_shoulder_roll
     physical_name: L_SHOULDER_R
     bus: left_arm
-
     motor:
       node_id: 24
       unit: radian
 
-      encoder:
-        type: dual
-        position_reference: output
-        counts_per_output_revolution: 262144
-        gear_ratio: 101.0
-
   - name: left_shoulder_yaw
     physical_name: L_SHOULDER_Y
     bus: left_arm
-
     motor:
       node_id: 25
       unit: radian
 
-      encoder:
-        type: dual
-        position_reference: output
-        counts_per_output_revolution: 262144
-        gear_ratio: 101.0
-
   - name: left_elbow_yaw
     physical_name: L_ELBOW_Y
     bus: left_arm
-
     motor:
       node_id: 26
       unit: radian
 
-      encoder:
-        type: dual
-        position_reference: output
-        counts_per_output_revolution: 262144
-        gear_ratio: 101.0
-
   - name: left_wrist_pitch
     physical_name: L_WRIST_P
     bus: left_arm
-
     motor:
       node_id: 27
       unit: radian
 
-      encoder:
-        type: dual
-        position_reference: output
-        counts_per_output_revolution: 262144
-        gear_ratio: 101.0
-
   - name: left_wrist_yaw
     physical_name: L_WRIST_Y
     bus: left_arm
-
     motor:
       node_id: 28
       unit: radian
 
-      encoder:
-        type: dual
-        position_reference: output
-        counts_per_output_revolution: 262144
-        gear_ratio: 101.0
-
   - name: left_wrist_roll
     physical_name: L_WRIST_R
     bus: left_arm
-
     motor:
       node_id: 29
       unit: radian
 
-      encoder:
-        type: dual
-        position_reference: output
-        counts_per_output_revolution: 262144
-        gear_ratio: 101.0
-
-  # ============================================================
-  # 右臂（Right Arm）
-  # ============================================================
-
+  # Right Arm
   - name: right_shoulder_pitch
     physical_name: R_SHOULDER_P
     bus: right_arm
-
     motor:
       node_id: 16
       unit: radian
 
-      encoder:
-        type: dual
-        position_reference: output
-        counts_per_output_revolution: 262144
-        gear_ratio: 101.0
-
   - name: right_shoulder_roll
     physical_name: R_SHOULDER_R
     bus: right_arm
-
     motor:
       node_id: 17
       unit: radian
 
-      encoder:
-        type: dual
-        position_reference: output
-        counts_per_output_revolution: 262144
-        gear_ratio: 101.0
-
   - name: right_shoulder_yaw
     physical_name: R_SHOULDER_Y
     bus: right_arm
-
     motor:
       node_id: 18
       unit: radian
 
-      encoder:
-        type: dual
-        position_reference: output
-        counts_per_output_revolution: 262144
-        gear_ratio: 101.0
-
   - name: right_elbow_yaw
     physical_name: R_ELBOW_Y
     bus: right_arm
-
     motor:
       node_id: 19
       unit: radian
 
-      encoder:
-        type: dual
-        position_reference: output
-        counts_per_output_revolution: 262144
-        gear_ratio: 101.0
-
   - name: right_wrist_pitch
     physical_name: R_WRIST_P
     bus: right_arm
-
     motor:
       node_id: 20
       unit: radian
 
-      encoder:
-        type: dual
-        position_reference: output
-        counts_per_output_revolution: 262144
-        gear_ratio: 101.0
-
   - name: right_wrist_yaw
     physical_name: R_WRIST_Y
     bus: right_arm
-
     motor:
       node_id: 21
       unit: radian
 
-      encoder:
-        type: dual
-        position_reference: output
-        counts_per_output_revolution: 262144
-        gear_ratio: 101.0
-
   - name: right_wrist_roll
     physical_name: R_WRIST_R
     bus: right_arm
-
     motor:
       node_id: 22
       unit: radian
 
-      encoder:
-        type: dual
-        position_reference: output
-        counts_per_output_revolution: 262144
-        gear_ratio: 101.0
-
-# ============================================================
-# 物理轴别名
-# ============================================================
-
+# 业务别名只引用同一个实体关节，不能据此重复创建 Motor。
 shared_axes:
-
-  # 这里把多个业务语义明确收敛到同一个物理轴。node_id 2 只有一台实体
-  # 电机，同时可能被 waist_pitch 和 Fold/腿链业务引用。
-  # 驱动内部必须只创建一个 Motor 实例；两个业务线程不能分别直接发送
-  # 目标，必须通过共享轴所有权仲裁控制。切换所有者时还应遵守
-  # safety.yaml 中的保持当前位置和排他所有权规则。
   - physical_joint: fold_p3
-
-    # 这些是业务层可申请的别名，不会创建额外电机；实际所有权仍由安全策略仲裁。
     semantic_aliases:
       - waist_pitch
       - fold_chain_p3

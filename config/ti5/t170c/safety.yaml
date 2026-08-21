@@ -1,319 +1,213 @@
-# 这份文件是主机侧安全策略，不是机械硬限位、驱动器固件保护参数或安全继电器配置。
-# 任何允许运动的条件都应在这里和代码中同时通过；未验证的信息保持关闭或 null，
-# 不以“看起来合理”的默认值替代实机证据。
-# schema_version 用于选择兼容的安全策略格式，不是固件版本或协议版本。
 schema_version: 1
 
 startup:
-
-  # 默认启动在 discovery，只做接口/节点发现和反馈读取，不接受正式运动目标；
-  # 即使 position_csp 在下面标为支持，也必须先通过本节的启动门槛。
-  default_mode: discovery
-
-  # 本体所有逻辑总线和实体电机都必须出现，不能缺轴启动后仍按完整机器人运行。
+  # Discovery 完成并获得有效当前位置之前，不允许进入运动控制状态。
+  require_discovery_complete: true
   require_all_body_buses: true
   require_all_body_motors: true
-
-  # 未完成当前实体机器人的方向/零点标定时禁止运动；null 和 calibrated=false
-  # 不能被程序解释成默认方向或零偏。
-  require_calibration_for_motion: true
-  # 没有可追溯的主机软件位置限位时禁止运动。这里的限位只用于软件钳位和
-  # 目标拒绝，不等同于机械止挡或电机固件位置保护。
-  require_position_limits_for_motion: true
+  require_position_feedback: true
 
 control_modes:
-
-  # 第一版只开放已有可靠协议证据支持的 Position CSP；其它模式的进入/退出、
-  # 反馈布局或逐轴安全边界尚未完整验证，因此必须保持 supported/allow_motion=false。
+  # 第一版正式驱动只开放已经确认的 Position CSP。
   position_csp:
-    # 使用 0x44 发送周期位置目标，并用 CSP 反馈确认实际状态。
     supported: true
     allow_motion: true
 
+  # 以下模式协议虽然已有部分信息，但安全参数和实机行为尚未完全确认。
   speed_csp:
-    # 协议命令虽有资料，但逐轴速度/加速度/电流约束和实机行为尚未补齐。
     supported: false
     allow_motion: false
 
   current_csp:
-    # 未得到足够可靠的逐轴连续/峰值电流及持续时间数据，不能开放电流控制。
     supported: false
     allow_motion: false
 
   position_non_csp:
-    # 非 CSP 位置模式的切换和反馈确认流程尚未作为统一安全路径验证。
     supported: false
     allow_motion: false
 
   pt:
-    # PT 是独立的 8 字节位打包力位混合协议，边界和掉线行为未验证，当前禁用。
     supported: false
     allow_motion: false
 
+# 单位全部为 rad。
+# 这些值来自当前 T170C 软件配置，只作为主机软件限位。
 position_limits:
-
-  # 所有 min/max 统一使用 rad，且是主机侧软件位置限位；不能描述成机械硬限位、
-  # 固件限位或完整无碰撞工作空间。source 记录限位数据的来源，便于追溯和复核；
-  # verified_on_robot 只有在当前这台实体机器人逐轴验证后才能改为 true。
-  # ============================================================
-  # 腰部 / 折叠（Waist / Fold）
-  # ============================================================
-
   waist_yaw:
     min: -1.570796327
     max: 1.570796327
-    source: current_t170c_software_config
     verified_on_robot: false
 
+  # ID 2 同时服务 waist_pitch 和 Fold。
+  # 第一版采用两套现有业务限位的保守交集 ±80°。
   fold_p3:
-    # ID 2 是共享物理轴：现有腰部语义为 ±90°，Fold 链语义为 ±80°。
-    # 当前数值采用两者交集作为保守的软件限位；真正发送目标前仍必须由
-    # shared_axis_control 的唯一所有者决定语义，不能让两套业务同时下发。
     min: -1.396263402
     max: 1.396263402
-    source: conservative_intersection
     verified_on_robot: false
 
   fold_p2:
     min: -2.757620218
     max: 0.0
-    source: current_t170c_software_config
     verified_on_robot: false
 
   fold_p1:
     min: -1.570796327
     max: 1.570796327
-    source: current_t170c_software_config
     verified_on_robot: false
 
   fold_r:
     min: -0.174532925
     max: 0.174532925
-    source: current_t170c_software_config
     verified_on_robot: false
-
-  # ============================================================
-  # 头部（Head）
-  # ============================================================
 
   neck_yaw:
     min: -0.523598776
     max: 0.523598776
-    source: current_t170c_software_config
     verified_on_robot: false
 
   neck_pitch:
     min: -0.523598776
     max: 0.523598776
-    source: current_t170c_software_config
     verified_on_robot: false
 
   neck_roll:
     min: -0.523598776
     max: 0.523598776
-    source: current_t170c_software_config
     verified_on_robot: false
-
-  # ============================================================
-  # 左臂（Left Arm）
-  # ============================================================
 
   left_shoulder_pitch:
     min: -2.792526803
     max: 0.872664626
-    source: current_t170c_software_config
     verified_on_robot: false
 
   left_shoulder_roll:
     min: -1.396263402
     max: 1.396263402
-    source: current_t170c_software_config
     verified_on_robot: false
 
   left_shoulder_yaw:
     min: -2.617993878
     max: 2.617993878
-    source: current_t170c_software_config
     verified_on_robot: false
 
   left_elbow_yaw:
     min: -2.268928028
     max: 0.610865238
-    source: current_t170c_software_config
     verified_on_robot: false
 
   left_wrist_pitch:
     min: -2.617993878
     max: 2.617993878
-    source: current_t170c_software_config
     verified_on_robot: false
 
   left_wrist_yaw:
     min: -0.698131701
     max: 0.436332313
-    source: current_t170c_software_config
     verified_on_robot: false
 
   left_wrist_roll:
     min: -2.268928028
     max: 0.575958653
-    source: current_t170c_software_config
     verified_on_robot: false
-
-  # ============================================================
-  # 右臂（Right Arm）
-  # ============================================================
 
   right_shoulder_pitch:
     min: -0.872664626
     max: 2.792526803
-    source: current_t170c_software_config
     verified_on_robot: false
 
   right_shoulder_roll:
     min: -1.396263402
     max: 1.396263402
-    source: current_t170c_software_config
     verified_on_robot: false
 
   right_shoulder_yaw:
     min: -2.617993878
     max: 2.617993878
-    source: current_t170c_software_config
     verified_on_robot: false
 
   right_elbow_yaw:
     min: -0.610865238
     max: 2.268928028
-    source: current_t170c_software_config
     verified_on_robot: false
 
   right_wrist_pitch:
     min: -2.617993878
     max: 2.617993878
-    source: current_t170c_software_config
     verified_on_robot: false
 
   right_wrist_yaw:
     min: -0.436332313
     max: 0.698131701
-    source: current_t170c_software_config
     verified_on_robot: false
 
   right_wrist_roll:
     min: -0.575958653
     max: 2.268928028
-    source: current_t170c_software_config
     verified_on_robot: false
 
+# 当前协议调查没有得到足够可靠的逐轴动态/电气安全参数。
+# 保持 null，禁止为了通过配置校验而自行编造数值。
 dynamic_limits:
-
-  # 这些逐轴速度、加速度、jerk 和单周期步长的可靠数据尚未从协议调查和
-  # 当前实体机器人验证中得到。null 表示“尚未确定”，不是 0、无限大或已关闭；
-  # 禁止在此自行猜测数值，补齐前由代码拒绝依赖这些限制的运动。
   max_velocity_rad_s: null
   max_acceleration_rad_s2: null
   max_jerk_rad_s3: null
   max_step_per_cycle_rad: null
-
-  # 当前实体机器人尚未验证这些限制。
   verified_on_robot: false
 
 electrical_limits:
-
-  # 协议资料缺少可按型号/节点可靠对应的连续电流、峰值电流和持续时间，
-  # 因而全部保持 null；不能把少量日志中的电流值当成全机安全限流。
   max_continuous_current_a: null
   max_peak_current_a: null
   peak_current_duration_ms: null
-
-  # 当前实体机器人尚未验证这些电气限制。
   verified_on_robot: false
 
 temperature_limits:
-
-  # 电机和 PCB 的告警/关断阈值仍缺少逐轴可靠来源，null 代表未知而不是关闭保护；
-  # 在厂家参数或受控实机验证前禁止自行填入温度值。
   motor_warning_c: null
   motor_shutdown_c: null
   pcb_warning_c: null
   pcb_shutdown_c: null
-
-  # 当前实体机器人尚未验证这些温度限制。
   verified_on_robot: false
 
 shared_axis_control:
-
   fold_p3:
-
-    # ID 2 的默认所有权为 none，启动时不允许 waist 或 fold 业务直接抢占它。
+    # ID 2 只有一个实体执行器，waist 和 fold 不能同时拥有运动目标。
     default_owner: none
-
-    # 只有列出的业务语义可以申请该轴；同一时刻只能有一个 owner。
-    allowed_owners:
-      - waist
-      - fold
-
-    # true 表示所有权是硬门槛，未获得唯一 owner 时拒绝发送运动目标。
+    allowed_owners: [waist, fold]
     require_exclusive_owner: true
 
-    # 切换控制来源时，旧控制器先停止改变目标；新控制器以当前反馈作为
-    # 第一目标，再逐步改变目标，避免共享轴在交接瞬间跳变。
+    # 所有权切换时先使用当前反馈作为新控制器首目标，
+    # 避免切换瞬间产生位置跳变。
     hold_current_position_during_handover: true
 
 fault_policy:
-
-  # 故障清除必须由上层确认故障原因和恢复条件后显式执行；禁止在控制循环中
-  # 无条件反复发送清故障命令，以免掩盖真实故障或在未恢复时重新运动。
+  # 故障必须确认原因后由上层显式恢复，禁止控制循环不断自动清故障。
   automatic_clear_fault: false
-
-  # 进入故障后停止接收新的运动目标，保留故障上下文供人工/恢复状态机处理。
   stop_accepting_motion_on_fault: true
-
-  # 未知故障位必须原样保留，避免解析器只认已知位而丢失厂家新增信息。
   preserve_unknown_fault_bits: true
 
 shutdown_policy:
-
-  # 当前 Fold/WAIST 的抱闸和去使能行为尚未完全验证；程序退出时不自动批量
-  # disable，避免把承载轴置于未知状态或引发防坠风险。
+  # Fold/WAIST 的抱闸和去使能行为尚未完成安全验证，
+  # 因此程序退出时不能无条件向所有节点发送 disable。
   automatic_disable: false
-
-  # 未反解并验证抱闸 raw 命令及机械到位反馈前，不由本程序控制抱闸。
   brake_control_enabled: false
 
+# 这些属于维护/标定命令，不进入普通运动控制 API。
 firmware_parameter_writes:
-
-  # 实时运动程序默认禁止写入固件参数；这些操作应由独立维护工具在停机、
-  # 逐轴确认和可回滚的流程中执行，不能混入正常启动或控制循环。
-  # 修改 CAN ID 可能导致节点失联或 ID 冲突，因此保持禁止。
   allow_can_id_change: false
-  # 修改波特率可能立即造成整条物理分区通信不匹配，因此保持禁止。
   allow_bitrate_change: false
-
-  # 固件位置/速度/电流保护值缺少逐型号逐轴可靠数据，不能由配置或业务程序写入。
   allow_position_limit_write: false
   allow_speed_limit_write: false
   allow_current_limit_write: false
-
-  # PID 参数对不同执行器和负载敏感，现有资料存在冲突，禁止在线调参。
   allow_pid_write: false
-
-  # 编码器校准和零点写入会改变位置坐标，必须使用 calibration.yaml 的实体标定流程；
-  # 在未完成人工确认前禁止写入执行器。
   allow_encoder_calibration: false
+
+  # 当前机器人零位已经保存在电机侧。
+  # 禁止为了建立自主驱动再次写位置 offset / 零位。
   allow_zero_write: false
 
-  # Flash 保存和恢复出厂会持久化或清除参数，可能造成不可逆配置变化，禁止默认执行。
   allow_flash_save: false
-  # Factory Reset 会覆盖未知的厂家参数，不能作为故障恢复捷径。
   allow_factory_reset: false
-
-  # Bootloader 命令属于固件维护，不属于实时运动控制路径。
   allow_bootloader_commands: false
 
 disconnect_protection:
-
-  # 0x59 的字节格式已知，但时间单位及超时后究竟保持、归零、失能还是抱闸
-  # 仍未在当前实体机器人上验证；因此禁止自动写入，避免误触发未知动作。
+  # 0x59 帧格式已知，但掉线后的固件实际动作仍未完成验证。
   firmware_disconnect_protection_write: false

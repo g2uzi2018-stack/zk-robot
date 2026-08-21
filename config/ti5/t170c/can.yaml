@@ -1,0 +1,130 @@
+# T170C 本体的 SocketCAN 链路、自动发现、接收、控制周期和进程互斥策略。
+# 这里描述主机侧通信行为；本体应用层命令的具体字节仍属于 C++ 协议实现，
+# 不在配置中把 0x08、0x44、0x02 等命令字做成可调参数。
+#
+# schema_version 用于让加载器选择兼容的配置格式，不代表 Linux 内核、
+# SocketCAN 或电机固件的版本。
+schema_version: 1
+
+socketcan:
+
+  # Classic CAN 链路的标称速率，单位为 bit/s；1000000 即 1 Mbit/s。
+  # 这是链路参数，必须与实际接口和分区内电机匹配。
+  bitrate: 1000000
+
+  # 只限定允许扫描的 Linux SocketCAN 接口名称；它不把某个 canX
+  # 永久绑定到某个逻辑分区，实际映射由启动发现完成。
+  interface_regex: "^can[0-9]+$"
+
+  # 启动时接口必须已经存在且处于 UP 状态；缺少接口时不能假装分区完整。
+  require_interface_up: true
+
+  # false 表示机器人程序自身不执行 ip link 配置，不主动设置 bitrate、
+  # restart-ms 或接口 UP/DOWN，避免运动程序依赖 root 权限；这些链路准备
+  # 工作由系统启动脚本或运维流程负责。
+  manage_linux_link: false
+
+  # 启动时读取并校验接口实际 bitrate，发现不匹配就拒绝进入控制态。
+  validate_bitrate: true
+
+  # SocketCAN bus-off 自动恢复的参考时间，单位为 ms；它是链路恢复策略，
+  # 不是电机应用层的掉线保护，也不代替 watchdog 的反馈新鲜度判断。
+  restart_ms: 100
+
+discovery:
+
+  # 自动发现用于确定 logical bus -> 当前 Linux canX，而不是修改电机 CAN ID。
+  # 每次启动重新扫描，避免沿用上一次设备枚举得到的接口名称。
+  enabled: true
+
+  # false 表示不缓存 canX 映射；重启或适配器重新枚举后仍从实际接口查找。
+  cache_mapping: false
+
+  # 按 robot.yaml 中每个逻辑分区的 expected_node_ids 探测固定节点。
+  strategy: expected_node_ids
+
+  # 探测只使用只读位置查询 0x08；此等待时间单位为 ms。
+  # 具体命令字、帧布局和响应判断属于 C++ ti5_joint 协议实现，不在这里配置。
+  response_timeout_ms: 50
+
+  # 同一“逻辑分区 + node ID”连续收到有效响应的确认次数，降低偶发帧
+  # 或错误接口匹配造成误发现的概率。
+  confirmations_required: 3
+
+  # 每个待确认节点最多尝试的次数；达到上限仍未确认就按发现失败处理。
+  max_attempts: 5
+
+  # false 表示实体机器人控制阶段不允许缺轴后继续正常启动；少一个期望
+  # 节点就不能把该本体分区当成完整可运动分区。
+  allow_partial_bus: false
+
+  # 一个逻辑分区只能对应一个实际 Linux 接口，避免把同一分区拆到多个
+  # 接口后仍被当作一组完整电机。
+  require_unique_bus_match: true
+
+  # 傲意手使用独立的字节流分片协议，不使用本体 0x08 发现流程；其探测
+  # 需要另行实现和验证。
+  discover_hands: false
+
+receive:
+
+  # 接收策略采用集中线程/集中分发，而不是多个 Motor 对同一个 fd 抢 read()；
+  # 这样才能统一处理反馈、错误帧和单调时间戳。
+  centralized_receiver: true
+
+  # 保留 CAN error frame，用于识别 bus-off、仲裁/链路错误并触发安全状态机。
+  receive_error_frames: true
+
+  # 每个物理节点保留最新的有效反馈，控制循环读取的是新鲜快照而不是旧队列。
+  latest_feedback_cache: true
+
+  # 反馈时间戳使用 monotonic 时钟，不受系统校时或墙上时间跳变影响。
+  timestamp_clock: monotonic
+
+  # SocketCAN 过滤器只接收本接口允许的节点及所需错误帧，降低无关帧进入
+  # 集中接收器后被误关联的风险。
+  use_can_filters: true
+
+control:
+
+  # 控制/状态循环参考频率，单位为 Hz；100 表示目标周期约 10 ms，最终仍需
+  # 根据总线负载和实机反馈稳定性验证。
+  frequency_hz: 100
+
+  # 同一 Linux 接口上相邻节点发送之间的最小间隔，单位为 us，用于平滑发送
+  # 突发和给反馈处理留出时间。
+  inter_frame_gap_us: 50
+
+  # 一批命令发送后的反馈等待参考时间，单位为 us；它不是单帧响应超时，不能
+  # 代替 watchdog 对反馈是否持续更新的判断。
+  post_batch_feedback_wait_us: 200
+
+  # 连续/累计发送失败达到该阈值时进入发送故障处理，不继续无条件发布运动目标。
+  send_failure_threshold: 30
+
+watchdog:
+
+  # 反馈新鲜度以“收到该节点新的有效反馈距当前经过多少控制周期”衡量；
+  # 连续超过此周期数没有新反馈，就认为该节点反馈失效，而不是仅看 write() 是否成功。
+  stale_feedback_cycles: 3
+
+  # 反馈失效后拒绝新的运动目标，避免在状态未知时继续扩大目标变化。
+  reject_new_motion_on_stale_feedback: true
+
+  # 反馈失效后进入故障态，由上层执行保持、停机或人工恢复流程。
+  enter_fault_on_stale_feedback: true
+
+  # 检测到 bus-off 直接进入故障态；链路自动重启不等于电机已恢复可控。
+  enter_fault_on_bus_off: true
+
+exclusive_control:
+
+  # 排他控制用于避免两个控制程序同时向同一机器人发送运动命令；监听程序
+  # 可以存在，但不能在没有统一调度的情况下发送同一节点的控制帧。
+  enabled: true
+
+  # 跨进程锁文件路径；启动控制器时先持有它，退出或异常恢复时释放。
+  lock_file: "/run/lock/ti5-can-controller.lock"
+
+  # 已有控制器持锁时，第二个控制程序直接拒绝进入运动控制态。
+  reject_second_controller: true

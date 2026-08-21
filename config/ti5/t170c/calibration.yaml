@@ -1,0 +1,142 @@
+# 这是“当前这一台实体机器人”的装配标定结果，不是 T170C 型号的公共参数。
+# 它可能随机器人实例、机械拆装、执行器更换或重新校准而变化；不要把本文件
+# 的零点和方向复制成所有 T170C 的默认值。
+#
+# 角度换算约定：
+#   joint_angle = encoder_angle * direction + zero_offset_rad
+# 其中 encoder_angle 是按 robot.yaml 解码得到的编码器角度。
+# direction 只能是 1 或 -1：1 表示编码器增加方向与模型关节正方向一致，
+# -1 表示二者相反。zero_offset_rad 是从编码器坐标转换到模型关节坐标时
+# 需要添加的零点偏移，单位为 rad。
+#
+# 在已知关节参考姿态下读取编码器位置后，零点按下式计算：
+#   zero_offset_rad = reference_joint_angle - direction * encoder_angle
+# calibrated=false 表示该关节尚未完成实体标定，正式运动控制不得直接使用它。
+# 当前未知值必须保持 null，禁止把 direction 猜成 1 或把 zero_offset_rad 猜成 0.0。
+# schema_version 用于选择兼容的标定文件格式，不是机器人固件版本。
+schema_version: 1
+
+robot_instance:
+
+  # 当前实例的序列号；尚未完成与实体铭牌/设备读取结果的绑定时保持 null。
+  serial_number: null
+  # 标定记录格式版本，用于后续格式迁移；不表示标定是否已经完成。
+  calibration_version: 1
+
+joints:
+
+  # 每个条目必须与 robot.yaml 中的逻辑关节键一一对应。
+  # direction、zero_offset_rad 和 calibrated 是实体标定状态，不是型号公共参数；
+  # 标定前保持 null/false，代码必须在正式运动入口检查 calibrated=true。
+  waist_yaw:
+    # 只能填写 1 或 -1；当前尚未通过逐轴小角度实机验证，保持 null。
+    direction: null
+    # 单位为 rad，按上面的参考姿态公式计算；未知时保持 null，不填写 0.0。
+    zero_offset_rad: null
+    # 只有方向和零点都已记录并复核后才改为 true。
+    calibrated: false
+
+  fold_p3:
+    direction: null
+    zero_offset_rad: null
+    calibrated: false
+
+  fold_p2:
+    direction: null
+    zero_offset_rad: null
+    calibrated: false
+
+  fold_p1:
+    direction: null
+    zero_offset_rad: null
+    calibrated: false
+
+  fold_r:
+    direction: null
+    zero_offset_rad: null
+    calibrated: false
+
+  neck_yaw:
+    direction: null
+    zero_offset_rad: null
+    calibrated: false
+
+  neck_pitch:
+    direction: null
+    zero_offset_rad: null
+    calibrated: false
+
+  neck_roll:
+    direction: null
+    zero_offset_rad: null
+    calibrated: false
+
+  left_shoulder_pitch:
+    direction: null
+    zero_offset_rad: null
+    calibrated: false
+
+  left_shoulder_roll:
+    direction: null
+    zero_offset_rad: null
+    calibrated: false
+
+  left_shoulder_yaw:
+    direction: null
+    zero_offset_rad: null
+    calibrated: false
+
+  left_elbow_yaw:
+    direction: null
+    zero_offset_rad: null
+    calibrated: false
+
+  left_wrist_pitch:
+    direction: null
+    zero_offset_rad: null
+    calibrated: false
+
+  left_wrist_yaw:
+    direction: null
+    zero_offset_rad: null
+    calibrated: false
+
+  left_wrist_roll:
+    direction: null
+    zero_offset_rad: null
+    calibrated: false
+
+  right_shoulder_pitch:
+    direction: null
+    zero_offset_rad: null
+    calibrated: false
+
+  right_shoulder_roll:
+    direction: null
+    zero_offset_rad: null
+    calibrated: false
+
+  right_shoulder_yaw:
+    direction: null
+    zero_offset_rad: null
+    calibrated: false
+
+  right_elbow_yaw:
+    direction: null
+    zero_offset_rad: null
+    calibrated: false
+
+  right_wrist_pitch:
+    direction: null
+    zero_offset_rad: null
+    calibrated: false
+
+  right_wrist_yaw:
+    direction: null
+    zero_offset_rad: null
+    calibrated: false
+
+  right_wrist_roll:
+    direction: null
+    zero_offset_rad: null
+    calibrated: false

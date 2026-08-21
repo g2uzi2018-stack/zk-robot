@@ -1,0 +1,57 @@
+# 左右傲意灵巧手的独立控制器配置。灵巧手与 T170C 本体一体化关节不是同一套
+# 应用层协议：本体使用 ti5_joint，灵巧手使用带 55 AA 包头和分片的 aoyi_hand。
+# schema_version 用于选择兼容的手控制器配置格式，不是手固件版本。
+schema_version: 1
+
+hands:
+
+  left:
+
+    # name 是手控制器的逻辑名称，不等于本体 joints 中的实体电机。
+    name: left_hand
+
+    # 傲意手协议与本体 0x08/0x44 等命令不同，必须由独立协议实现解析。
+    protocol: aoyi_hand
+
+    # 左手 node ID=70（0x46）来自当前拓扑/配置资料；在线状态尚未由本轮
+    # 实机日志确认，不能据此默认手已连接。
+    controller_node_id: 70
+
+    # 手不是本体 22 台一体化电机的启动必需项；本体缺手时仍允许本体启动。
+    required_for_body_startup: false
+
+    # 协议逐帧状态、分片超时和实际接口仍未完成验证，保持 false。
+    protocol_verified: false
+
+    discovery:
+      # 当前不加入本体 0x08 自动发现；傲意手需要独立的字节流探测/重组流程。
+      enabled: false
+
+    control:
+      # 未验证协议之前不开放手部控制，避免向错误节点发送本体运动命令。
+      enabled: false
+
+  right:
+
+    # 右手控制器的逻辑名称，与本体右臂关节分区无关。
+    name: right_hand
+
+    # 使用独立的 aoyi_hand 应用层协议。
+    protocol: aoyi_hand
+
+    # 右手 node ID=60（0x3C）来自当前拓扑/配置资料；在线状态尚未确认。
+    controller_node_id: 60
+
+    # 手部不是本体控制启动的必要条件。
+    required_for_body_startup: false
+
+    # 尚未完成协议和实机逐帧验证，保持未验证状态。
+    protocol_verified: false
+
+    discovery:
+      # 不把右手纳入本体 0x08 只读位置查询发现流程。
+      enabled: false
+
+    control:
+      # 在协议验证和独立控制器实现完成前保持关闭。
+      enabled: false

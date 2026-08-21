@@ -1,5 +1,7 @@
 #pragma once
 
+#include "ti5/config/config.hpp"
+
 #include <chrono>
 #include <cstdint>
 #include <optional>
@@ -8,14 +10,8 @@
 
 namespace robot::ti5
 {
-    // robot.yaml 中描述的一条 TI5 本体逻辑 CAN 分区。
-    struct LogicalCanBus
-    {
-        std::string name;
-        std::string protocol;
-        bool required{true};
-        std::vector<std::uint16_t> expected_node_ids;
-    };
+    // Discovery 原型沿用独立配置层的逻辑总线对象，不反向引入运行时依赖。
+    using LogicalCanBus = LogicalCanBusConfig;
 
     // Discovery 使用的运行时参数。该结构不依赖 YAML，便于协议和扫描逻辑独立演进。
     struct DiscoveryOptions

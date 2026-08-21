@@ -41,4 +41,22 @@ if(BUILD_TESTING)
     )
 
     add_test(NAME ti5_can_tests COMMAND ti5_can_tests)
+
+    add_executable(ti5_config_tests
+        tests/ti5_config_loader_test.cpp
+    )
+
+    target_link_libraries(ti5_config_tests PRIVATE
+        ti5_config
+    )
+
+    target_include_directories(ti5_config_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+
+    target_compile_definitions(ti5_config_tests PRIVATE
+        TI5_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
+    )
+
+    add_test(NAME ti5_config_tests COMMAND ti5_config_tests)
 endif()

@@ -89,7 +89,7 @@ int main(int argc, char **argv)
         const auto discovery_options = robot::ti5::loadDiscoveryConfig(can_config_path);
 
         const robot::ti5::CanDiscovery discovery;
-        const auto result = discovery.discover(robot_config.logical_buses, discovery_options);
+        const auto result = discovery.discover(robot_config.can_buses, discovery_options);
         printDiscoverySummary(result);
 
         if (!result.success)

@@ -546,7 +546,7 @@ PT 的以下信息仍缺失：完整进入/退出序列、`0x71` 真实语义、
 55 AA HAND_ID 01 CMD LEN PAYLOAD... LRC
 ```
 
-- `01` 为主站 ID。
+- `01` 为主站 ID
 - `LRC` 是从 `HAND_ID` 到最后一个 payload 字节的逐字节 XOR。
 - 完整应用包按每 8 字节切成多个 Classic CAN 帧，所有分片使用 `HAND_ID` 作为 CAN ID。
 - 接收端按字节流重组；看到 `55 AA` 后根据 `LEN` 判断完整包长度。

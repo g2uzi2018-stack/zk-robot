@@ -2,6 +2,8 @@
 
 #include <yaml-cpp/yaml.h>
 
+#include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <limits>
 #include <regex>
@@ -221,6 +223,31 @@ namespace
         return requireUnsignedScalar(requireScalarNode(map, key, context), context + "." + key);
     }
 
+    double requireDouble(const YAML::Node &map,
+                         const std::string &key,
+                         const std::string &context)
+    {
+        const auto value = requireScalarNode(map, key, context);
+        if (hasStringTag(value) || hasExplicitNonStringTag(value))
+        {
+            throwConfigError(context + "." + key, "类型错误，期望浮点数");
+        }
+        try
+        {
+            const auto parsed = value.as<double>();
+            if (!std::isfinite(parsed))
+            {
+                throwConfigError(context + "." + key, "数值必须为有限值");
+            }
+            return parsed;
+        }
+        catch (const YAML::Exception &error)
+        {
+            throwConfigError(context + "." + key,
+                             "类型错误，期望浮点数: " + std::string(error.what()));
+        }
+    }
+
     std::size_t toSizeT(const std::uint64_t value, const std::string &context)
     {
         if (value > static_cast<std::uint64_t>(std::numeric_limits<std::size_t>::max()))
@@ -331,6 +358,47 @@ namespace robot::ti5
         {
             throwConfigError(robot_context + ".body_motor_count", "必须为正数");
         }
+        if (result.body_motor_count != 22)
+        {
+            throwConfigError(robot_context + ".body_motor_count", "T170C 本体必须为 22 个 motor");
+        }
+
+        const auto encoder_defaults = requireMap(root, "encoder_defaults", context);
+        const auto encoder_context = context + ".encoder_defaults";
+        result.encoder_defaults.type = requireString(encoder_defaults, "type", encoder_context);
+        result.encoder_defaults.position_reference =
+            requireString(encoder_defaults, "position_reference", encoder_context);
+        const auto counts_per_output_revolution = requireUnsigned(
+            encoder_defaults,
+            "counts_per_output_revolution",
+            encoder_context);
+        if (counts_per_output_revolution > std::numeric_limits<std::uint32_t>::max())
+        {
+            throwConfigError(encoder_context + ".counts_per_output_revolution",
+                             "数值超出 uint32_t 范围");
+        }
+        result.encoder_defaults.counts_per_output_revolution =
+            static_cast<std::uint32_t>(counts_per_output_revolution);
+        result.encoder_defaults.gear_ratio =
+            requireDouble(encoder_defaults, "gear_ratio", encoder_context);
+
+        if (result.encoder_defaults.type != "dual")
+        {
+            throwConfigError(encoder_context + ".type", "当前 T170C 只支持 dual 编码器");
+        }
+        if (result.encoder_defaults.position_reference != "output")
+        {
+            throwConfigError(encoder_context + ".position_reference", "当前 T170C 位置参考必须为 output");
+        }
+        if (result.encoder_defaults.counts_per_output_revolution == 0)
+        {
+            throwConfigError(encoder_context + ".counts_per_output_revolution", "必须大于 0");
+        }
+        if (!(result.encoder_defaults.gear_ratio > 0.0) ||
+            !std::isfinite(result.encoder_defaults.gear_ratio))
+        {
+            throwConfigError(encoder_context + ".gear_ratio", "必须为正数");
+        }
 
         // 现有 robot.yaml 将逻辑 CAN 分区放在根节点，与 robot 元数据同级。
         const auto buses = requireSequence(root, "can_buses", context);
@@ -393,6 +461,106 @@ namespace robot::ti5
 
             total_node_count += bus.expected_node_ids.size();
             result.can_buses.push_back(std::move(bus));
+        }
+
+        const auto joints = requireSequence(root, "joints", context);
+        if (joints.size() != result.body_motor_count)
+        {
+            throwConfigError(context + ".joints", "physical joint 数量必须等于 body_motor_count=22");
+        }
+
+        std::unordered_set<std::string> joint_names;
+        std::unordered_set<std::string> physical_names;
+        std::unordered_set<std::string> physical_joint_keys;
+        std::size_t node_two_count = 0;
+
+        for (std::size_t joint_index = 0; joint_index < joints.size(); ++joint_index)
+        {
+            const auto joint_context = context + ".joints[" +
+                                       std::to_string(joint_index) + "]";
+            if (!joints[joint_index].IsMap())
+            {
+                throwConfigError(joint_context, "类型错误，期望 YAML mapping");
+            }
+
+            const auto &joint_node = joints[joint_index];
+            PhysicalJointConfig joint;
+            joint.name = requireString(joint_node, "name", joint_context);
+            joint.physical_name = requireString(joint_node, "physical_name", joint_context);
+            joint.bus = requireString(joint_node, "bus", joint_context);
+
+            if (joint.name.empty() || joint.physical_name.empty() || joint.bus.empty())
+            {
+                throwConfigError(joint_context, "name、physical_name、bus 不能为空");
+            }
+            if (!joint_names.insert(joint.name).second)
+            {
+                throwConfigError(joint_context + ".name", "physical joint 名称重复: " + joint.name);
+            }
+            if (!physical_names.insert(joint.physical_name).second)
+            {
+                throwConfigError(joint_context + ".physical_name",
+                                 "physical joint 名称重复: " + joint.physical_name);
+            }
+
+            const auto bus = std::find_if(
+                result.can_buses.begin(),
+                result.can_buses.end(),
+                [&joint](const auto &candidate) { return candidate.name == joint.bus; });
+            if (bus == result.can_buses.end())
+            {
+                throwConfigError(joint_context + ".bus",
+                                 "引用了未声明的 logical bus: " + joint.bus);
+            }
+
+            const auto motor = requireMap(joint_node, "motor", joint_context);
+            const auto motor_context = joint_context + ".motor";
+            joint.motor.node_id = parseNodeId(
+                requireScalarNode(motor, "node_id", motor_context),
+                motor_context + ".node_id");
+            const auto unit = requireString(motor, "unit", motor_context);
+            if (unit != "radian")
+            {
+                throwConfigError(motor_context + ".unit", "当前 T170C 只支持 radian");
+            }
+            joint.motor.unit = JointUnit::Radian;
+            joint.motor.encoder = result.encoder_defaults;
+
+            if (std::find(bus->expected_node_ids.begin(),
+                          bus->expected_node_ids.end(),
+                          joint.motor.node_id) == bus->expected_node_ids.end())
+            {
+                throwConfigError(motor_context + ".node_id",
+                                 "node ID 不属于对应 logical bus 的 expected_node_ids");
+            }
+
+            if (joint.motor.node_id == 2 && ++node_two_count > 1)
+            {
+                throwConfigError(motor_context + ".node_id",
+                                 "ID 2 只能存在一个 physical joint");
+            }
+            const auto physical_key = joint.bus + "#" +
+                                      std::to_string(joint.motor.node_id);
+            if (!physical_joint_keys.insert(physical_key).second)
+            {
+                throwConfigError(motor_context + ".node_id",
+                                 "同一 logical bus 内 node ID 只能对应一个 physical joint");
+            }
+            result.joints.push_back(std::move(joint));
+        }
+
+        for (const auto &bus : result.can_buses)
+        {
+            for (const auto node_id : bus.expected_node_ids)
+            {
+                const auto physical_key = bus.name + "#" + std::to_string(node_id);
+                if (physical_joint_keys.find(physical_key) == physical_joint_keys.end())
+                {
+                    throwConfigError(context + ".joints",
+                                     "expected node 必须恰好对应一个 physical joint: " +
+                                         bus.name + "/" + std::to_string(node_id));
+                }
+            }
         }
 
         if (total_node_count != result.body_motor_count)

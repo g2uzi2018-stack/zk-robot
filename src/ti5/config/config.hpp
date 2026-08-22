@@ -31,12 +31,50 @@ struct DiscoveryOptions
     bool require_unique_bus_match{true};
 };
 
+// 当前 T170C 本体电机统一使用弧度作为运行时单位。
+enum class JointUnit
+{
+    Radian
+};
+
+// T170C 本体的编码器运行时配置。
+//
+// type 和 position_reference 保留为字符串，是为了让配置快照可以直接反映
+// YAML 中的声明；Config Loader 会在进入运行时前严格限制为 dual/output。
+struct EncoderConfig
+{
+    std::string type{"dual"};
+    std::string position_reference{"output"};
+    std::uint32_t counts_per_output_revolution{0};
+    double gear_ratio{0.0};
+};
+
+// 一个物理 T170C 电机节点的配置。
+struct CanMotorConfig
+{
+    std::uint16_t node_id{0};
+    JointUnit unit{JointUnit::Radian};
+    EncoderConfig encoder;
+};
+
+// robot.yaml 中一个 physical joint 的唯一描述。
+// shared_axes 只提供业务别名，不会生成第二个 PhysicalJointConfig。
+struct PhysicalJointConfig
+{
+    std::string name;
+    std::string physical_name;
+    std::string bus;
+    CanMotorConfig motor;
+};
+
 struct Ti5RobotConfig
 {
     std::string vendor;
     std::string model;
     std::size_t body_motor_count{0};
     std::vector<LogicalCanBus> can_buses;
+    EncoderConfig encoder_defaults;
+    std::vector<PhysicalJointConfig> joints;
 };
 
 using LogicalCanBusConfig = LogicalCanBus;

@@ -56,4 +56,18 @@ namespace robot::ti5
 
         return static_cast<std::int32_t>(truncated_counts);
     }
+
+    double speedRawToOutputRadiansPerSecond(
+        std::int16_t speed_raw,
+        double gear_ratio)
+    {
+        if (!(gear_ratio > 0.0) || !std::isfinite(gear_ratio))
+        {
+            throw std::invalid_argument("gear_ratio must be positive and finite");
+        }
+
+        constexpr double kTwoPi = 6.283185307179586476925286766559;
+        return static_cast<double>(speed_raw) * kTwoPi /
+               (100.0 * gear_ratio);
+    }
 }

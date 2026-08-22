@@ -43,6 +43,21 @@ if(BUILD_TESTING)
 
     add_test(NAME ti5_can_tests COMMAND ti5_can_tests)
 
+    add_executable(ti5_can_motor_tests
+        tests/ti5_can_motor_test.cpp
+        src/ti5/can/can_bus.cpp
+        src/ti5/motor/can_motor.cpp
+        src/ti5/can/can_protocol.cpp
+        src/ti5/can/encoder_conversion.cpp
+        src/can/socket_can.cpp
+    )
+
+    target_include_directories(ti5_can_motor_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+
+    add_test(NAME ti5_can_motor_tests COMMAND ti5_can_motor_tests)
+
     add_executable(ti5_config_tests
         tests/ti5_config_loader_test.cpp
     )

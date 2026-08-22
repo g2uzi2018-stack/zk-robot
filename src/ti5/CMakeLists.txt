@@ -2,6 +2,8 @@ target_sources(robot PRIVATE
     can/can_protocol.cpp
     can/encoder_conversion.cpp
     can/can_discovery.cpp
+    can/can_bus.cpp
+    motor/can_motor.cpp
 )
 
 add_library(ti5_config STATIC

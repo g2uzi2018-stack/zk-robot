@@ -89,12 +89,106 @@ schema_version: 1
 robot:
   vendor: TI5
   model: T170C
-  body_motor_count: 2
+  body_motor_count: 22
 can_buses:
   - name: first
     protocol: ti5_joint
     required: true
-    expected_node_ids: [1, 2]
+    expected_node_ids: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22]
+encoder_defaults:
+  type: dual
+  position_reference: output
+  counts_per_output_revolution: 262144
+  gear_ratio: 101.0
+joints:
+  - name: joint_1
+    physical_name: JOINT_1
+    bus: first
+    motor: {node_id: 1, unit: radian}
+  - name: joint_2
+    physical_name: JOINT_2
+    bus: first
+    motor: {node_id: 2, unit: radian}
+  - name: joint_3
+    physical_name: JOINT_3
+    bus: first
+    motor: {node_id: 3, unit: radian}
+  - name: joint_4
+    physical_name: JOINT_4
+    bus: first
+    motor: {node_id: 4, unit: radian}
+  - name: joint_5
+    physical_name: JOINT_5
+    bus: first
+    motor: {node_id: 5, unit: radian}
+  - name: joint_6
+    physical_name: JOINT_6
+    bus: first
+    motor: {node_id: 6, unit: radian}
+  - name: joint_7
+    physical_name: JOINT_7
+    bus: first
+    motor: {node_id: 7, unit: radian}
+  - name: joint_8
+    physical_name: JOINT_8
+    bus: first
+    motor: {node_id: 8, unit: radian}
+  - name: joint_9
+    physical_name: JOINT_9
+    bus: first
+    motor: {node_id: 9, unit: radian}
+  - name: joint_10
+    physical_name: JOINT_10
+    bus: first
+    motor: {node_id: 10, unit: radian}
+  - name: joint_11
+    physical_name: JOINT_11
+    bus: first
+    motor: {node_id: 11, unit: radian}
+  - name: joint_12
+    physical_name: JOINT_12
+    bus: first
+    motor: {node_id: 12, unit: radian}
+  - name: joint_13
+    physical_name: JOINT_13
+    bus: first
+    motor: {node_id: 13, unit: radian}
+  - name: joint_14
+    physical_name: JOINT_14
+    bus: first
+    motor: {node_id: 14, unit: radian}
+  - name: joint_15
+    physical_name: JOINT_15
+    bus: first
+    motor: {node_id: 15, unit: radian}
+  - name: joint_16
+    physical_name: JOINT_16
+    bus: first
+    motor: {node_id: 16, unit: radian}
+  - name: joint_17
+    physical_name: JOINT_17
+    bus: first
+    motor: {node_id: 17, unit: radian}
+  - name: joint_18
+    physical_name: JOINT_18
+    bus: first
+    motor: {node_id: 18, unit: radian}
+  - name: joint_19
+    physical_name: JOINT_19
+    bus: first
+    motor: {node_id: 19, unit: radian}
+  - name: joint_20
+    physical_name: JOINT_20
+    bus: first
+    motor: {node_id: 20, unit: radian}
+  - name: joint_21
+    physical_name: JOINT_21
+    bus: first
+    motor: {node_id: 21, unit: radian}
+  - name: joint_22
+    physical_name: JOINT_22
+    bus: first
+    motor: {node_id: 22, unit: radian}
 )yaml";
 
     const std::string kMinimalCanYaml = R"yaml(
@@ -153,8 +247,12 @@ int main()
         writeText(can_path, kMinimalCanYaml);
 
         const auto minimal_robot = robot::ti5::loadRobotConfig(robot_path);
-        expect(minimal_robot.can_buses.front().expected_node_ids.size() == 2,
+        expect(minimal_robot.can_buses.front().expected_node_ids.size() == 22,
                "minimal robot node IDs were not loaded");
+        expect(minimal_robot.joints.size() == 22 &&
+                   minimal_robot.encoder_defaults.counts_per_output_revolution == 262144 &&
+                   minimal_robot.encoder_defaults.gear_ratio == 101.0,
+               "physical joints and encoder defaults were not loaded");
         const auto minimal_can = robot::ti5::loadCanConfig(can_path);
         expect(minimal_can.socketcan.restart_ms == std::chrono::milliseconds{100},
                "minimal restart_ms was not loaded");
@@ -169,37 +267,39 @@ int main()
                                "T170C",
                                "non-T170C model must be rejected");
 
-        writeText(robot_path, replaceOnce(kMinimalRobotYaml, "expected_node_ids: [1, 2]", "expected_node_ids: [1, 1]"));
+        writeText(robot_path, replaceOnce(kMinimalRobotYaml, "expected_node_ids: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22]", "expected_node_ids: [1, 1]"));
         expectThrowsContaining([&] { robot::ti5::loadRobotConfig(robot_path); },
                                "重复",
                                "duplicate node IDs in one logical bus must be rejected");
 
-        writeText(robot_path, replaceOnce(kMinimalRobotYaml, "expected_node_ids: [1, 2]", "expected_node_ids: [0, 2]"));
+        writeText(robot_path, replaceOnce(kMinimalRobotYaml, "expected_node_ids: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22]", "expected_node_ids: [0, 2]"));
         expectThrowsContaining([&] { robot::ti5::loadRobotConfig(robot_path); },
                                "1..2047",
                                "invalid node IDs must be rejected");
 
-        writeText(robot_path, replaceOnce(kMinimalRobotYaml, "body_motor_count: 2", "body_motor_count: 3"));
+        writeText(robot_path, replaceOnce(kMinimalRobotYaml, "body_motor_count: 22", "body_motor_count: 21"));
         expectThrowsContaining([&] { robot::ti5::loadRobotConfig(robot_path); },
-                               "不一致",
+                               "22",
                                "body motor count mismatch must be rejected");
 
         const auto duplicate_bus_yaml = replaceOnce(
             kMinimalRobotYaml,
-            "    expected_node_ids: [1, 2]",
+            "    expected_node_ids: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22]",
             "    expected_node_ids: [1]\n  - name: first\n    protocol: ti5_joint\n    required: true\n    expected_node_ids: [2]");
         writeText(robot_path, duplicate_bus_yaml);
         expectThrowsContaining([&] { robot::ti5::loadRobotConfig(robot_path); },
                                "名称重复",
                                "duplicate logical bus names must be rejected");
 
-        const auto cross_bus_duplicate_yaml = replaceOnce(
+
+        const auto duplicate_node_yaml = replaceOnce(
             kMinimalRobotYaml,
-            "    expected_node_ids: [1, 2]",
-            "    expected_node_ids: [1]\n  - name: second\n    protocol: ti5_joint\n    required: true\n    expected_node_ids: [1]");
-        writeText(robot_path, cross_bus_duplicate_yaml);
-        expect(robot::ti5::loadRobotConfig(robot_path).can_buses.size() == 2,
-               "node IDs on separate logical buses should be independently scoped");
+            "motor: {node_id: 22, unit: radian}",
+            "motor: {node_id: 2, unit: radian}");
+        writeText(robot_path, duplicate_node_yaml);
+        expectThrowsContaining([&] { robot::ti5::loadRobotConfig(robot_path); },
+                               "ID 2",
+                               "ID 2 must have one physical joint");
 
         writeText(robot_path, replaceOnce(kMinimalRobotYaml, "required: true", "required: [true]"));
         expectThrowsContaining([&] { robot::ti5::loadRobotConfig(robot_path); },

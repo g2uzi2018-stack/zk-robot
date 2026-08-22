@@ -16,4 +16,9 @@ namespace robot::ti5
     std::int32_t radiansToPositionCounts(
         double radians,
         std::uint32_t counts_per_output_revolution);
+
+    // 将 CSP 反馈的电机轴速度原始值（0.01 Hz）转换为输出端 rad/s。
+    double speedRawToOutputRadiansPerSecond(
+        std::int16_t speed_raw,
+        double gear_ratio);
 }

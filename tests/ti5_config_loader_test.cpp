@@ -106,6 +106,12 @@ socketcan:
   validate_bitrate: true
   manage_linux_link: false
   restart_ms: 100
+  reconfigure_wait_ms: 100
+  startup_wait_ms: 100
+  body_adapter:
+    selector: sysfs_parent
+    value: test-parent
+    expected_channels: 1
 discovery:
   enabled: true
   response_timeout_ms: 50
@@ -129,6 +135,11 @@ int main()
 
         const auto shipped_can = robot::ti5::loadCanConfig(source_dir / "config/ti5/t170c/can.yaml");
         expect(shipped_can.socketcan.bitrate == 1000000, "shipped SocketCAN bitrate mismatch");
+        expect(shipped_can.socketcan.manage_linux_link, "shipped SocketCAN link management mismatch");
+        expect(shipped_can.socketcan.body_adapter.selector == "id_path",
+               "shipped body adapter selector mismatch");
+        expect(shipped_can.socketcan.body_adapter.expected_channels == 4,
+               "shipped body adapter channel count mismatch");
         expect(shipped_can.discovery.enabled, "shipped Discovery enabled mismatch");
         expect(shipped_can.discovery.response_timeout == std::chrono::milliseconds{50},
                "shipped Discovery timeout mismatch");

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "ti5/config.hpp"
+#include "ti5/config/config.hpp"
 
 #include <cstdint>
 #include <optional>
@@ -33,12 +33,13 @@ namespace robot::ti5
         std::vector<LogicalBusDiscoveryResult> logical_buses;
     };
 
-    // 枚举 UP 的 canX 接口，并通过 0x08 位置查询确认本体逻辑分区。
-    // 该类只依赖中性的 DiscoveryOptions/LogicalCanBus，不直接依赖 YAML。
+    // 在调用方提供的本体候选接口中，通过 0x08 位置查询确认逻辑分区。
+    // 不负责枚举 USB 设备、配置 bitrate、拉起接口或选择本体适配器。
     class CanDiscovery final
     {
     public:
         DiscoveryResult discover(const std::vector<LogicalCanBus> &logical_buses,
-                                 const DiscoveryOptions &options) const;
+                                 const DiscoveryOptions &options,
+                                 const std::vector<std::string> &candidate_interfaces) const;
     };
 }

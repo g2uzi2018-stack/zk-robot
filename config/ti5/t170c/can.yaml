@@ -5,14 +5,30 @@ socketcan:
   bitrate: 1000000
   interface_regex: "^can[0-9]+$"
 
-  # CAN 接口由系统提前配置并置为 UP。
-  # 主控制程序只校验状态，不主动执行 ip link，避免依赖 root 权限。
+  # 自主驱动负责检查、配置并启动本体 CAN 接口。
+  manage_linux_link: true
+
+  # 接口准备完成后必须处于 UP，并校验实际波特率。
   require_interface_up: true
   validate_bitrate: true
-  manage_linux_link: false
 
-  # Linux SocketCAN bus-off 自动恢复参考配置。
+  # Linux SocketCAN bus-off 自动恢复。
   restart_ms: 100
+
+  # 原厂 stop 后约等待 100 ms 再重新配置。
+  reconfigure_wait_ms: 100
+
+  # CAN 接口 up 后等待设备状态稳定再开始扫描。
+  startup_wait_ms: 100
+
+  # 识别的是“本体四通道 USB-CAN 适配器”，
+  # 不是固定 waist/head/arm 对应哪个 canX。
+  # 实机 ID_SERIAL_SHORT 在两块 KCAN-USB_X4 上相同，不能用 serial 区分；
+  # ID_PATH 是当前可获得的稳定物理端口属性。
+  body_adapter:
+    selector: id_path
+    value: "platform-3610000.usb-usb-0:1.2.2:1.0"
+    expected_channels: 4
 
 discovery:
   enabled: true

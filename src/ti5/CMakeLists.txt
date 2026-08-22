@@ -16,11 +16,11 @@ target_link_libraries(ti5_config PUBLIC
 )
 
 add_executable(ti5_can_discovery
-    main.cpp
-    config_loader.cpp
-    discovery.cpp
+    tools/can_discovery_main.cpp
+    can/can_discovery.cpp
     can/can_protocol.cpp
     ${CMAKE_SOURCE_DIR}/src/can/socket_can.cpp
+    ${CMAKE_SOURCE_DIR}/src/can/can_interface_manager.cpp
 )
 
 target_include_directories(ti5_can_discovery PRIVATE

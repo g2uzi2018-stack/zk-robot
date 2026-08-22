@@ -12,6 +12,7 @@ find_package(yaml-cpp REQUIRED)
 add_executable(robot
     main.cpp
     src/can/socket_can.cpp
+    src/can/can_interface_manager.cpp
 )
 
 add_subdirectory(src/tiago)
@@ -59,4 +60,15 @@ if(BUILD_TESTING)
     )
 
     add_test(NAME ti5_config_tests COMMAND ti5_config_tests)
+
+    add_executable(can_interface_manager_tests
+        tests/can_interface_manager_test.cpp
+        src/can/can_interface_manager.cpp
+    )
+
+    target_include_directories(can_interface_manager_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+
+    add_test(NAME can_interface_manager_tests COMMAND can_interface_manager_tests)
 endif()

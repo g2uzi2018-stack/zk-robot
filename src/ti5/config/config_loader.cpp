@@ -274,6 +274,28 @@ namespace
             throwConfigError(context, "interface_regex 不是合法正则表达式: " + std::string(error.what()));
         }
     }
+
+    void validateAdapterSelector(const robot::ti5::CanAdapterSelectorConfig &selector,
+                                 const std::string &context)
+    {
+        if (selector.selector != "usb_serial_short" &&
+            selector.selector != "usb_serial" &&
+            selector.selector != "id_path" &&
+            selector.selector != "sysfs_parent" &&
+            selector.selector != "device_path")
+        {
+            throwConfigError(context + ".selector",
+                             "只支持 usb_serial_short、usb_serial、id_path、sysfs_parent、device_path");
+        }
+        if (selector.value.empty())
+        {
+            throwConfigError(context + ".value", "不能为空");
+        }
+        if (selector.expected_channels == 0)
+        {
+            throwConfigError(context + ".expected_channels", "必须为正数");
+        }
+    }
 }
 
 namespace robot::ti5
@@ -407,6 +429,23 @@ namespace robot::ti5
         result.socketcan.manage_linux_link = requireBool(socketcan, "manage_linux_link", socketcan_context);
         const auto restart_ms = requireUnsigned(socketcan, "restart_ms", socketcan_context);
         result.socketcan.restart_ms = toMilliseconds(restart_ms, socketcan_context + ".restart_ms");
+        const auto reconfigure_wait_ms = requireUnsigned(socketcan, "reconfigure_wait_ms", socketcan_context);
+        result.socketcan.reconfigure_wait =
+            toMilliseconds(reconfigure_wait_ms, socketcan_context + ".reconfigure_wait_ms");
+        const auto startup_wait_ms = requireUnsigned(socketcan, "startup_wait_ms", socketcan_context);
+        result.socketcan.startup_wait =
+            toMilliseconds(startup_wait_ms, socketcan_context + ".startup_wait_ms");
+
+        const auto body_adapter = requireMap(socketcan, "body_adapter", socketcan_context);
+        const auto body_adapter_context = socketcan_context + ".body_adapter";
+        result.socketcan.body_adapter.selector =
+            requireString(body_adapter, "selector", body_adapter_context);
+        result.socketcan.body_adapter.value =
+            requireString(body_adapter, "value", body_adapter_context);
+        result.socketcan.body_adapter.expected_channels =
+            toSizeT(requireUnsigned(body_adapter, "expected_channels", body_adapter_context),
+                    body_adapter_context + ".expected_channels");
+        validateAdapterSelector(result.socketcan.body_adapter, body_adapter_context);
 
         if (result.socketcan.interface_regex.empty())
         {
@@ -451,5 +490,52 @@ namespace robot::ti5
                                  std::to_string(result.discovery.confirmations_required) + ")");
         }
         return result;
+    }
+
+    DiscoveryOptions makeDiscoveryOptions(const CanConfig &config)
+    {
+        const auto &socketcan = config.socketcan;
+        const auto &discovery = config.discovery;
+
+        if (socketcan.interface_regex != "^can[0-9]+$")
+        {
+            throw std::invalid_argument(
+                "socketcan.interface_regex must be '^can[0-9]+$'");
+        }
+        if (!socketcan.require_interface_up)
+        {
+            throw std::invalid_argument(
+                "socketcan.require_interface_up must be true for T170C discovery");
+        }
+        if (!discovery.enabled)
+        {
+            throw std::invalid_argument(
+                "discovery.enabled must be true for ti5_can_discovery");
+        }
+        if (discovery.allow_partial_bus)
+        {
+            throw std::invalid_argument(
+                "discovery.allow_partial_bus must be false for ti5_can_discovery");
+        }
+        if (!discovery.require_unique_bus_match)
+        {
+            throw std::invalid_argument(
+                "discovery.require_unique_bus_match must be true for ti5_can_discovery");
+        }
+
+        DiscoveryOptions result;
+        result.interface_regex = socketcan.interface_regex;
+        result.require_interface_up = socketcan.require_interface_up;
+        result.response_timeout = discovery.response_timeout;
+        result.confirmations_required = discovery.confirmations_required;
+        result.max_attempts = discovery.max_attempts;
+        result.allow_partial_bus = discovery.allow_partial_bus;
+        result.require_unique_bus_match = discovery.require_unique_bus_match;
+        return result;
+    }
+
+    DiscoveryOptions loadDiscoveryConfig(const std::filesystem::path &config_path)
+    {
+        return makeDiscoveryOptions(loadCanConfig(config_path));
     }
 }

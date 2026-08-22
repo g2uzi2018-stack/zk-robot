@@ -3,6 +3,17 @@ schema_version: 1
 # 左右傲意灵巧手虽然也通过 CAN 通信，
 # 但不是 T170C 本体关节使用的 ti5_joint 协议。
 # 因此独立配置，不能直接套用本体 0x08/0x44 发现和控制逻辑。
+# 当前仓库可追溯的傲意手配置/核查文档记录其 SocketCAN bitrate 为 1,000,000 bit/s。
+# 手模块拥有自己的 transport；本体 CanDiscovery 不读取或扫描这里的接口。
+transport:
+  type: socketcan
+  bitrate: 1000000
+  restart_ms: 100
+  manage_linux_link: false
+  adapter_selector:
+    selector: id_path
+    value: "platform-3610000.usb-usb-0:1.2.3:1.0"
+
 hands:
   left:
     name: left_hand
@@ -10,6 +21,11 @@ hands:
 
     # 当前已有配置记录的手控制器 CAN ID。
     controller_node_id: 70
+
+    # 适配器内通道序号，不是永久的 Linux canX 名称；当前实机曾观察为 can4。
+    interface_selector:
+      selector: adapter_channel
+      value: 0
 
     # 灵巧手异常暂时不阻止 T170C 本体启动。
     required_for_body_startup: false
@@ -27,6 +43,10 @@ hands:
     name: right_hand
     protocol: aoyi_hand
     controller_node_id: 60
+    # 当前实机曾观察为同一适配器的下一个通道（can5）。
+    interface_selector:
+      selector: adapter_channel
+      value: 1
     required_for_body_startup: false
     protocol_verified: false
 

@@ -13,6 +13,9 @@ add_executable(robot
     main.cpp
     src/can/socket_can.cpp
     src/can/can_interface_manager.cpp
+    src/ti5/hand/aoyi_protocol.cpp
+    src/ti5/hand/hand_config.cpp
+    src/ti5/hand/hand_discovery.cpp
 )
 
 add_subdirectory(src/tiago)
@@ -75,6 +78,58 @@ if(BUILD_TESTING)
     )
 
     add_test(NAME ti5_config_tests COMMAND ti5_config_tests)
+
+
+    add_executable(aoyi_protocol_tests
+        tests/aoyi_protocol_test.cpp
+        src/ti5/hand/aoyi_protocol.cpp
+    )
+
+    target_include_directories(aoyi_protocol_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+
+    add_test(NAME aoyi_protocol_tests COMMAND aoyi_protocol_tests)
+
+    add_executable(aoyi_hand_discovery_tests
+        tests/aoyi_hand_discovery_test.cpp
+        src/ti5/hand/aoyi_protocol.cpp
+        src/ti5/hand/hand_discovery.cpp
+        src/can/socket_can.cpp
+    )
+
+    target_include_directories(aoyi_hand_discovery_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+
+    target_link_libraries(aoyi_hand_discovery_tests PRIVATE
+        spdlog::spdlog
+        fmt::fmt
+    )
+
+    add_test(
+        NAME aoyi_hand_discovery_tests
+        COMMAND aoyi_hand_discovery_tests
+    )
+
+    add_executable(aoyi_hand_config_tests
+        tests/aoyi_hand_config_test.cpp
+        src/ti5/hand/hand_config.cpp
+    )
+
+    target_include_directories(aoyi_hand_config_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+
+    target_link_libraries(aoyi_hand_config_tests PRIVATE
+        yaml-cpp
+    )
+
+    target_compile_definitions(aoyi_hand_config_tests PRIVATE
+        TI5_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
+    )
+
+    add_test(NAME aoyi_hand_config_tests COMMAND aoyi_hand_config_tests)
 
     add_executable(can_interface_manager_tests
         tests/can_interface_manager_test.cpp

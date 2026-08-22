@@ -2,6 +2,8 @@
 #include "common/logger.hpp"
 #include "ti5/can/can_discovery.hpp"
 #include "ti5/config/config_loader.hpp"
+#include "ti5/hand/hand_config.hpp"
+#include "ti5/hand/hand_discovery.hpp"
 
 #include <cstdint>
 #include <exception>
@@ -225,6 +227,117 @@ int main()
 
         robot::common::logger()->info(
             "TI5 T170C CAN Discovery PASS");
+
+        // ============================================================
+        // 7. Prepare the independent Aoyi hand adapter and discover
+        //    left/right ownership by protocol response.
+        // ============================================================
+
+        try
+        {
+            const auto hand_config =
+                robot::ti5::hand::loadHandConfig(
+                    "config/ti5/t170c/hands.yaml");
+            const auto &hand_selector =
+                hand_config.transport.adapter_selector;
+            const auto hand_interfaces =
+                interface_manager.selectAdapter(
+                    all_interfaces,
+                    hand_selector);
+
+            robot::common::logger()->info(
+                "Selected {} Aoyi hand CAN interfaces using {}={}",
+                hand_interfaces.size(),
+                hand_selector.kind,
+                hand_selector.value);
+
+            const robot::can::CanInterfaceSettings hand_settings{
+                hand_config.transport.bitrate,
+                hand_config.transport.restart_ms,
+                hand_config.transport.reconfigure_wait,
+                hand_config.transport.startup_wait,
+                hand_config.transport.validate_bitrate};
+
+            std::vector<std::string> hand_candidate_interfaces;
+            hand_candidate_interfaces.reserve(hand_interfaces.size());
+            for (const auto &interface : hand_interfaces)
+            {
+                robot::can::CanInterfaceInfo ready;
+                if (hand_config.transport.manage_linux_link)
+                {
+                    ready = interface_manager.prepare(
+                        interface.name,
+                        hand_settings);
+                }
+                else
+                {
+                    ready = interface_manager.inspect(interface.name);
+                    if (hand_config.transport.require_interface_up &&
+                        !ready.up)
+                    {
+                        throw std::runtime_error(
+                            ready.name + " is not UP");
+                    }
+                    if (hand_config.transport.validate_bitrate &&
+                        (!ready.bitrate ||
+                         *ready.bitrate !=
+                             hand_config.transport.bitrate))
+                    {
+                        throw std::runtime_error(
+                            ready.name + " bitrate mismatch");
+                    }
+                }
+
+                robot::common::logger()->info(
+                    "Aoyi hand CAN {} ready: state={}, bitrate={}, "
+                    "restart-ms={}",
+                    ready.name,
+                    ready.up ? "UP" : "DOWN",
+                    numberOrUnknown(ready.bitrate),
+                    numberOrUnknown(ready.restart_ms));
+                hand_candidate_interfaces.push_back(interface.name);
+            }
+
+            const robot::ti5::hand::HandDiscovery hand_discovery;
+            const auto hand_result =
+                hand_discovery.discover(
+                    hand_config,
+                    hand_candidate_interfaces);
+
+            robot::common::logger()->info(
+                "====================================");
+            robot::common::logger()->info(
+                "AOYI HAND DISCOVERY RESULT");
+            robot::common::logger()->info(
+                "====================================");
+            robot::common::logger()->info(
+                "left_hand -> {}",
+                stringOrUnknown(hand_result.left_interface));
+            robot::common::logger()->info(
+                "right_hand -> {}",
+                stringOrUnknown(hand_result.right_interface));
+            for (const auto &error : hand_result.errors)
+            {
+                robot::common::logger()->error("{}", error);
+            }
+
+            if (hand_result.success)
+            {
+                robot::common::logger()->info(
+                    "Aoyi Hand Discovery PASS");
+            }
+            else
+            {
+                robot::common::logger()->error(
+                    "Aoyi Hand Discovery FAIL");
+            }
+        }
+        catch (const std::exception &error)
+        {
+            robot::common::logger()->error(
+                "Aoyi Hand Discovery FAIL: {}",
+                error.what());
+        }
 
         robot::common::logger()->info(
             "Robot shutdown");

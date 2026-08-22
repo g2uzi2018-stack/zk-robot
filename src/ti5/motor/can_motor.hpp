@@ -20,8 +20,9 @@ public:
 
     std::optional<double> queryPosition();
     std::optional<double> readPosition();
-    std::optional<MotorFeedback> queryCspStatus();
-    std::optional<MotorFeedback> latestFeedback();
+    std::optional<CspFeedback> queryCspStatus();
+    std::optional<MotorState> latestState();
+    std::optional<MotorState> latestFeedback();
 
     // 只编码并发送 0x44 Position CSP；不在 main 或实机测试中调用。
     void commandPositionCsp(double position_rad);

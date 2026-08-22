@@ -30,7 +30,10 @@ CanMotor::CanMotor(const CanMotorConfig &config, CanBus &bus)
         throw std::invalid_argument("T170C encoder configuration is invalid");
     }
 
-    bus_.registerNode(node_id_);
+    // The current CanMotor implementation is CSP-only.  Registering the
+    // parser context explicitly prevents a future PT DLC=8 frame from being
+    // decoded as CSP by accident.
+    bus_.registerNode(node_id_, FeedbackFormat::Csp);
 }
 
 std::optional<double> CanMotor::queryPosition()
@@ -43,32 +46,37 @@ std::optional<double> CanMotor::queryPosition()
         return std::nullopt;
     }
     return positionCountsToRadians(
-        *feedback->position_counts,
+        feedback->position_counts,
         encoder_.counts_per_output_revolution);
 }
 
 std::optional<double> CanMotor::readPosition()
 {
     bus_.collectPendingFeedback();
-    const auto feedback = bus_.latestFeedback(node_id_);
-    if (!feedback || !feedback->position_counts)
+    const auto state = bus_.latestState(node_id_);
+    if (!state || !state->position_counts)
     {
         return std::nullopt;
     }
     return positionCountsToRadians(
-        *feedback->position_counts,
+        state->position_counts->value,
         encoder_.counts_per_output_revolution);
 }
 
-std::optional<MotorFeedback> CanMotor::queryCspStatus()
+std::optional<CspFeedback> CanMotor::queryCspStatus()
 {
     return bus_.queryCsp(node_id_, std::chrono::milliseconds{50});
 }
 
-std::optional<MotorFeedback> CanMotor::latestFeedback()
+std::optional<MotorState> CanMotor::latestState()
 {
     bus_.collectPendingFeedback();
-    return bus_.latestFeedback(node_id_);
+    return bus_.latestState(node_id_);
+}
+
+std::optional<MotorState> CanMotor::latestFeedback()
+{
+    return latestState();
 }
 
 void CanMotor::commandPositionCsp(const double position_rad)

@@ -82,8 +82,7 @@ namespace
     bool isPositionQueryResponseFormat(const robot::can::CanFrame &frame) noexcept
     {
         return isStandardCanId(frame.id) &&
-               frame.data_length >= 5 &&
-               frame.data_length <= kMaximumCanDataLength &&
+               frame.data_length == 5 &&
                frame.data[0] == kPositionQueryCommand;
     }
 

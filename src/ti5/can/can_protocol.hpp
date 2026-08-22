@@ -6,7 +6,18 @@
 
 namespace robot::ti5
 {
+    // 0x08 当前位置查询响应的协议层表示。
+    //
+    // 这是 CAN 帧解码后的原始反馈，不包含运行时聚合状态。
+    struct PositionQueryFeedback
+    {
+        std::uint16_t node_id{0};
+        std::int32_t position_counts{0};
+    };
+
     // 0x41 CSP 反馈帧中的已知字段。
+    //
+    // 0x44 的反馈在线上使用同样的布局，因此也使用这个类型。
     struct CspFeedback
     {
         // 反馈帧对应的 CAN 节点 ID。

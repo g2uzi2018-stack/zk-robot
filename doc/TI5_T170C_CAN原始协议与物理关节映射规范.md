@@ -138,6 +138,76 @@ ip link set can0 up
 
 驱动不得假定 `write()` 成功等于电机已执行。必须用对应 CAN ID 的新反馈、接收时间戳和错误状态确认链路仍然有效。
 
+### 2.1 现有工程是否自动拉起 CAN
+
+几套代码的行为不同：
+
+| 工程 | 是否自动拉起 | 实际命令/范围 |
+|---|---|---|
+| 原厂 `Ti5ROBOT_PACKAGE` 的 `joint_manager` / `Ti5RobotControl.so` | **是** | SocketCAN 连接时先枚举接口；对要打开的通道调用 `can_do_stop()`，等待约 100 ms，调用 `can_set_bitrate()`，再调用 `can_do_start()`，然后才执行节点发现。不是通过 shell 调用 `ip`，而是链接 `libsocketcan` 通过 rtnetlink 配置内核接口 |
+| 当前 `ti5_follow_arm` 本体控制器 | **是** | 检查 `can0`～`can12`；接口存在但未 UP 时执行 `sudo ip link set canX up type can bitrate 1000000`，然后等待约 500 ms。后续电机扫描列表实际是 `can0`～`can11` |
+| 当前傲意手节点 | **否** | YAML 中 `can_auto_bringup: false`。若改为 true，则先执行 `ip link set canX down`，再执行 `ip link set canX up type can bitrate 1000000` |
+| 搬箱 `robot_hw_demo` | **是** | `init_socketcan()` 初始化 `can0`～`can5`，每口执行等价于 `sudo ip link set canX down && sudo ip link set canX up type can bitrate 1000000` |
+| 搬箱 `build/init_all_can.sh` | 不是最终启动 | 对 `can0`～`can7` 先以 1 Mbps 拉起、随后又置 DOWN；目的是留下“干净”的 DOWN 状态供程序重配 |
+
+#### 2.1.1 原厂 T170C 的准确启动链
+
+官方 T170C YAML 中 `type: 1` 表示 SocketCAN，`baud_rate: 1000` 的单位是 kbit/s。官方库在打开设备时再乘以 1000，因此最终配置是 `1,000,000 bit/s`，不是 1000 bit/s。
+
+原厂库中 `SocketCanInterface::initCanInterface(channel, bitrate_bps)` 的等效顺序是：
+
+```text
+can_do_stop(canX)
+sleep(约 100 ms)
+can_set_bitrate(canX, 1000000)
+can_do_start(canX)
+```
+
+对应的命令行语义为：
+
+```bash
+ip link set canX down
+ip link set canX type can bitrate 1000000
+ip link set canX up
+```
+
+之后 `Motor_CanGetNodeInfo()` 才开始节点发现。SocketCAN 模式参数为：最多 6 个 CAN 通道、T170C 配置中的最大应用 ID、`baud_rate=1000 kbit/s`、单次发现超时约 20 ms、设备类型 5（SocketCAN）。发现结果再按应答电机 ID 匹配到实际通道，不能把 YAML 的 `device_index/can_index` 直接等同于本机固定的 Linux `canX` 编号。
+
+原厂首次初始化路径没有显式配置 sample point、SJW、`txqueuelen` 或 `restart-ms`；`resetDevice()` 恢复路径会调用 `can_set_restart_ms(canX, 100)`。因此 `restart-ms=100` 可以作为与原厂恢复行为一致的自主驱动策略，但不能声称它是首次启动的必需协议参数。
+
+这一动作需要网络管理权限。原厂 `run_ti5_services.sh` 会给 `joint_manager` 设置：
+
+```text
+cap_net_admin,cap_net_raw+eip
+```
+
+实机上的官方 `joint_manager` 当前也确实具有这两个 file capabilities，所以普通用户启动时仍能在进程内把 DOWN 的 CAN 接口配置为 UP。若自主程序不使用 `sudo`，同样必须以 root 运行或为可执行文件赋予相应 capability。
+
+官方 T170C 关节连接配置全部是 SocketCAN、1 Mbps、双编码器、减速比 101；逻辑设备分组为：左臂 ID 23–29=`device_index 0`，右臂 ID 16–22=`device_index 1`，腰/折叠/头 ID 1–5、30–32=`device_index 2`。这是软件逻辑分组；最近实机发现的 Linux 接口仍是 `can0:1–5`、`can1:30–32`、`can2:23–29`、`can3:16–22`。
+
+当前本体控制器只显式指定 `bitrate=1000000`，没有在命令中指定 `restart-ms`、sample point、SJW 或 `txqueuelen`。2026-08-22 在线读取到 `can0`～`can3` 的内核状态为：
+
+```text
+bitrate     1000000
+sample-point 0.750
+restart-ms  100
+txqueuelen  10
+state       ERROR-ACTIVE
+```
+
+其中只有 1 Mbps 可以确定来自程序命令；其余值属于当前接口已有/驱动计算的状态，不能说是 `ti5_follow_arm` 显式配置。程序内部使用 `sudo` 的方案要求免密 sudo 或已有认证；傲意手的无 `sudo` 自动拉起则要求进程拥有 root/CAP_NET_ADMIN。
+
+自主驱动若希望启动结果完全确定，建议由 systemd/启动脚本统一配置，而不是在实时进程中调用 `system("sudo ip ...")`：
+
+```bash
+sudo ip link set can0 down
+sudo ip link set can0 type can bitrate 1000000 restart-ms 100
+sudo ip link set can0 txqueuelen 10
+sudo ip link set can0 up
+```
+
+对实际使用的 `can1`～`can3` 同样配置；不控制 Fold/WAIST 时可以不打开 `can0` 的业务发送路径。`restart-ms=100` 和队列长度 10 是当前实机状态，不是厂家协议硬性要求，最终仍应纳入 bus-off/延迟测试。
+
 ## 3. 数值单位与换算
 
 ### 3.1 位置
@@ -533,6 +603,8 @@ CAN 位置只是电机/输出编码器坐标，不自动等于 URDF 关节角：
 
 当前左右臂重定向缩放和偏置是外骨骼到机器人业务坐标的配置，不应误当成电机原点标定。自主驱动应把 `direction`、`zero_offset_rad`、`encoder_type`、`gear_ratio`、软限位分别保存，并在实机逐轴确认。
 
+补充核查显示，官方 T170C 控制链没有逐轴软件 `scale/offset`；官方 GUI 的 22 轴历史日志也能以 `raw_count×2π/262144` 直接还原动作目标。因此 CAN raw 到厂商电机角的第一版配置可统一使用 `direction=+1, zero_offset=0`。电机零点实际由驱动器内部的位置偏移承担。另有一层只供特定 IK/MDH 模型使用的 `motor_angle <-> model_q` 映射：T7/T170 左右臂及三折叠轴存在方向和 ±π/2 类偏置，详见同目录《TI5 T170C 现有标定与坐标映射核查》。这层模型映射不得重复填入 encoder calibration。
+
 ### 10.4 接收与事务模型
 
 - 每个接口一个发送锁；同接口串行发送，不同接口可以并行。
@@ -620,7 +692,7 @@ CAN 位置只是电机/输出编码器坐标，不自动等于 URDF 关节角：
 | 抱闸协议 | 旧版 `0x48/0x49`；官方有抽象刹车查询 | raw 查询命令、响应 DLC、值语义、开/闭确认、断电默认、与使能联动 | 机械支撑下抓官方工具查询/动作报文，核对电气图和制动器型号 |
 | Fold 去使能行为 | 现有 ROS 会失能 ID 3–5，不失能 1/2 | ID 2–5 在 `0x02`、掉电、断 CAN 时是否下落/自动抱闸 | 支撑或卸载条件下逐轴试验 |
 | `0x59` | 字节布局已知 | 时间单位和超时后的确切动作 | 卸载台架计时、拔 CAN/停发测试 |
-| 每轴方向和零点 | 业务配置有部分映射/基线 | 物理正方向、编码器零位、装配偏置、上电多圈一致性 | 小角度逐轴标定并与 URDF/实体方向记录 |
+| 每轴方向和零点 | 已找到第一层 `raw->motor` 直接映射证据，以及臂/三折叠轴的第二层模型映射 | 仍需做一次 22 轴同步只读快照；ID 1、5、30–32 的动态正方向需小幅验证 | 先与官方 SDK 静态读数逐轴比对，只对未通过项做小角度方向验证，不重新写零位 |
 | 每 ID 精确型号 | 只有分组型号 | 型号、序列号、固件、抱闸类型逐轴映射 | 官方型号查询 raw 抓包或铭牌清单 |
 | 安全限值 | CSV 不完整且冲突 | 每型号连续/峰值电流、速度、加速度、温度、转矩和持续时间 | 厂家参数表 + 逐轴台架验证 |
 

@@ -57,3 +57,30 @@ target_link_libraries(ti5_zero_home PRIVATE
 target_compile_definitions(ti5_zero_home PRIVATE
     TI5_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
 )
+
+# Hardware-in-the-loop direction labeling test.  It is intentionally excluded
+# from the default build and must be built and run explicitly.
+add_executable(ti5_direction_test EXCLUDE_FROM_ALL
+    tests/ti5_direction_test.cpp
+    src/can/socket_can.cpp
+    src/can/can_interface_manager.cpp
+    src/ti5/can/can_protocol.cpp
+    src/ti5/can/encoder_conversion.cpp
+    src/ti5/can/can_discovery.cpp
+    src/ti5/can/can_bus.cpp
+    src/ti5/motor/can_motor.cpp
+)
+
+target_include_directories(ti5_direction_test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+target_link_libraries(ti5_direction_test PRIVATE
+    ti5_config
+    spdlog::spdlog
+    fmt::fmt
+)
+
+target_compile_definitions(ti5_direction_test PRIVATE
+    TI5_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
+)

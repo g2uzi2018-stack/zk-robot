@@ -1,0 +1,1042 @@
+#include "can/can_interface_manager.hpp"
+#include "common/logger.hpp"
+
+#include "ti5/can/can_bus.hpp"
+#include "ti5/can/can_discovery.hpp"
+#include "ti5/can/encoder_conversion.hpp"
+#include "ti5/config/config_loader.hpp"
+#include "ti5/motor/can_motor.hpp"
+
+#include <yaml-cpp/yaml.h>
+
+#include <algorithm>
+#include <array>
+#include <atomic>
+#include <cerrno>
+#include <chrono>
+#include <cmath>
+#include <csignal>
+#include <cstdint>
+#include <cstdlib>
+#include <deque>
+#include <filesystem>
+#include <fstream>
+#include <iostream>
+#include <map>
+#include <memory>
+#include <optional>
+#include <poll.h>
+#include <stdexcept>
+#include <string>
+#include <thread>
+#include <vector>
+
+#include <fcntl.h>
+#include <sys/file.h>
+#include <sys/stat.h>
+#include <termios.h>
+#include <unistd.h>
+
+namespace
+{
+
+using namespace std::chrono_literals;
+
+constexpr auto kControlPeriod = 10ms;
+constexpr int kReadyProbeCycles = 30;
+constexpr int kHoldCycles = 30;
+constexpr int kMaximumStaleCycles = 3;
+constexpr double kDefaultDeltaRad = 0.001;
+constexpr double kMinimumDeltaRad = 0.0001;
+constexpr double kMaximumDeltaRad = 0.005;
+constexpr double kLimitMarginRad = 0.02;
+constexpr double kAllowedOvershootRad = 0.02;
+constexpr auto kKeyReleaseTimeout = 150ms;
+
+constexpr std::array<const char *, 14> kDirectionOrder{
+    "left_shoulder_pitch",
+    "left_shoulder_roll",
+    "left_shoulder_yaw",
+    "left_elbow_yaw",
+    "left_wrist_pitch",
+    "left_wrist_yaw",
+    "left_wrist_roll",
+    "right_shoulder_pitch",
+    "right_shoulder_roll",
+    "right_shoulder_yaw",
+    "right_elbow_yaw",
+    "right_wrist_pitch",
+    "right_wrist_yaw",
+    "right_wrist_roll",
+};
+
+std::atomic<bool> stop_requested{false};
+
+void signalHandler(int)
+{
+    stop_requested.store(true);
+}
+
+class SingleProcessLock final
+{
+public:
+    SingleProcessLock()
+    {
+        constexpr const char *lock_path =
+            "/tmp/zk_robot_ti5_motion.lock";
+
+        fd_ = ::open(lock_path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+        if (fd_ < 0 && errno == ENOENT)
+        {
+            fd_ = ::open(lock_path,
+                         O_CREAT | O_EXCL | O_RDONLY |
+                             O_CLOEXEC | O_NOFOLLOW,
+                         0666);
+            if (fd_ < 0 && errno == EEXIST)
+            {
+                fd_ = ::open(lock_path,
+                             O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+            }
+        }
+        if (fd_ < 0)
+        {
+            throw std::runtime_error(
+                "无法打开 TI5 实机运动互斥锁");
+        }
+        static_cast<void>(::fchmod(fd_, 0666));
+        if (::flock(fd_, LOCK_EX | LOCK_NB) != 0)
+        {
+            ::close(fd_);
+            fd_ = -1;
+            throw std::runtime_error(
+                "另一个 zk_robot 实机运动程序正在运行");
+        }
+    }
+
+    ~SingleProcessLock()
+    {
+        if (fd_ >= 0)
+        {
+            static_cast<void>(::flock(fd_, LOCK_UN));
+            ::close(fd_);
+        }
+    }
+
+    SingleProcessLock(const SingleProcessLock &) = delete;
+    SingleProcessLock &operator=(const SingleProcessLock &) = delete;
+
+private:
+    int fd_{-1};
+};
+
+bool processNamedIsRunning(const std::string &expected_name)
+{
+    const auto self = static_cast<long>(::getpid());
+    std::error_code error;
+    const std::filesystem::directory_iterator end;
+    for (std::filesystem::directory_iterator entry{
+             "/proc",
+             std::filesystem::directory_options::skip_permission_denied,
+             error};
+         !error && entry != end;
+         entry.increment(error))
+    {
+        const auto pid_text = entry->path().filename().string();
+        if (pid_text.empty() ||
+            !std::all_of(pid_text.begin(),
+                         pid_text.end(),
+                         [](const unsigned char value)
+                         { return value >= '0' && value <= '9'; }))
+        {
+            continue;
+        }
+
+        long pid = 0;
+        try
+        {
+            pid = std::stol(pid_text);
+        }
+        catch (const std::exception &)
+        {
+            continue;
+        }
+        if (pid == self)
+        {
+            continue;
+        }
+
+        std::ifstream comm{entry->path() / "comm"};
+        std::string process_name;
+        if (std::getline(comm, process_name) &&
+            process_name == expected_name)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+void requireExclusiveController()
+{
+    constexpr std::array<const char *, 4> controller_names{
+        "Ti5Control",
+        "joint_manager",
+        "ti5_follow_arm",
+        "robot",
+    };
+    for (const char *name : controller_names)
+    {
+        if (processNamedIsRunning(name))
+        {
+            throw std::runtime_error(
+                std::string{"检测到其他控制程序："} + name +
+                "；方向测试要求独占本体 CAN");
+        }
+    }
+}
+
+void requireExplicitConfirmation()
+{
+    const char *value =
+        std::getenv("ZK_ROBOT_CONFIRM_DIRECTION_TEST");
+    if (value == nullptr || std::string{value} != "YES")
+    {
+        throw std::runtime_error(
+            "未设置 ZK_ROBOT_CONFIRM_DIRECTION_TEST=YES；未打开 CAN");
+    }
+}
+
+struct Options
+{
+    double delta_rad{kDefaultDeltaRad};
+};
+
+void printUsage(const char *program)
+{
+    std::cout
+        << "用法：\n"
+        << "  " << program << " [--delta-rad 数值]\n\n"
+        << "默认每个 10 ms 控制周期移动 ±0.001 rad。\n"
+        << "测试顺序：左臂由肩到腕，再右臂由肩到腕。\n"
+        << "--delta-rad     设置按住方向键时每周期的增量，范围 0.0001～0.005 rad。\n";
+}
+
+Options parseOptions(const int argc, char **argv)
+{
+    Options options;
+    for (int index = 1; index < argc; ++index)
+    {
+        const std::string argument{argv[index]};
+        if (argument == "--help" || argument == "-h")
+        {
+            printUsage(argv[0]);
+            std::exit(0);
+        }
+        if (argument != "--delta-rad" && argument != "--step-rad")
+        {
+            throw std::invalid_argument("未知参数：" + argument);
+        }
+        if (index + 1 >= argc)
+        {
+            throw std::invalid_argument("--delta-rad 缺少数值");
+        }
+        try
+        {
+            options.delta_rad = std::stod(argv[++index]);
+        }
+        catch (const std::exception &)
+        {
+            throw std::invalid_argument("--delta-rad 不是有效数值");
+        }
+    }
+
+    if (!std::isfinite(options.delta_rad) ||
+        options.delta_rad < kMinimumDeltaRad ||
+        options.delta_rad > kMaximumDeltaRad)
+    {
+        throw std::invalid_argument(
+            "--delta-rad 必须在 0.0001～0.005 rad 之间");
+    }
+    return options;
+}
+
+std::filesystem::path configPath(const char *name)
+{
+#ifdef TI5_SOURCE_DIR
+    const std::filesystem::path root{TI5_SOURCE_DIR};
+#else
+    const std::filesystem::path root{"."};
+#endif
+    return root / "config" / "ti5" / "t170c" / name;
+}
+
+struct SafetyLimit
+{
+    double minimum{0.0};
+    double maximum{0.0};
+};
+
+std::map<std::string, SafetyLimit> loadSafetyLimits(
+    const std::filesystem::path &path)
+{
+    const YAML::Node root = YAML::LoadFile(path.string());
+    const YAML::Node limits = root["position_limits"];
+    if (!limits || !limits.IsMap())
+    {
+        throw std::runtime_error(
+            "safety.yaml 缺少 position_limits");
+    }
+
+    std::map<std::string, SafetyLimit> result;
+    for (const auto &entry : limits)
+    {
+        const auto name = entry.first.as<std::string>();
+        const auto value = entry.second;
+        const SafetyLimit limit{
+            value["min"].as<double>(),
+            value["max"].as<double>(),
+        };
+        if (!std::isfinite(limit.minimum) ||
+            !std::isfinite(limit.maximum) ||
+            limit.minimum >= limit.maximum)
+        {
+            throw std::runtime_error("无效的软件限位：" + name);
+        }
+        result.emplace(name, limit);
+    }
+    return result;
+}
+
+std::vector<robot::ti5::PhysicalJointConfig> orderedArmJoints(
+    const robot::ti5::Ti5RobotConfig &robot_config)
+{
+    std::map<std::string, robot::ti5::PhysicalJointConfig> by_name;
+    for (const auto &joint : robot_config.joints)
+    {
+        if (joint.bus == "left_arm" || joint.bus == "right_arm")
+        {
+            if (!by_name.emplace(joint.name, joint).second)
+            {
+                throw std::runtime_error(
+                    "robot.yaml 中存在重复关节：" + joint.name);
+            }
+        }
+    }
+
+    std::vector<robot::ti5::PhysicalJointConfig> result;
+    result.reserve(kDirectionOrder.size());
+    for (const char *name : kDirectionOrder)
+    {
+        const auto it = by_name.find(name);
+        if (it == by_name.end())
+        {
+            throw std::runtime_error(
+                "方向测试缺少关节配置：" + std::string{name});
+        }
+        result.push_back(it->second);
+    }
+    return result;
+}
+
+std::vector<std::string> prepareBodyCan(
+    const robot::ti5::CanConfig &can_config)
+{
+    robot::can::CanInterfaceManager manager;
+    const auto all_interfaces =
+        manager.enumerate(can_config.socketcan.interface_regex);
+    if (all_interfaces.empty())
+    {
+        throw std::runtime_error("没有找到 SocketCAN 接口");
+    }
+
+    const auto &selector = can_config.socketcan.body_adapter;
+    const auto body_interfaces = manager.selectAdapter(
+        all_interfaces,
+        robot::can::CanAdapterSelector{
+            selector.selector,
+            selector.value,
+            selector.expected_channels});
+    if (body_interfaces.empty())
+    {
+        throw std::runtime_error(
+            "没有找到匹配的四通道本体 USB-CAN 适配器");
+    }
+
+    const robot::can::CanInterfaceSettings settings{
+        can_config.socketcan.bitrate,
+        static_cast<std::uint32_t>(
+            can_config.socketcan.restart_ms.count()),
+        can_config.socketcan.reconfigure_wait,
+        can_config.socketcan.startup_wait,
+        can_config.socketcan.validate_bitrate};
+
+    std::vector<std::string> result;
+    result.reserve(body_interfaces.size());
+    for (const auto &interface : body_interfaces)
+    {
+        robot::common::logger()->info(
+            "准备本体 CAN {}",
+            interface.name);
+        const auto ready = manager.prepare(interface.name, settings);
+        if (!ready.up)
+        {
+            throw std::runtime_error(
+                interface.name + " 拉起失败");
+        }
+        if (can_config.socketcan.validate_bitrate &&
+            (!ready.bitrate ||
+             *ready.bitrate != can_config.socketcan.bitrate))
+        {
+            throw std::runtime_error(
+                interface.name + " 波特率校验失败");
+        }
+        robot::common::logger()->info(
+            "{} 已就绪：bitrate={}，restart-ms={}",
+            ready.name,
+            ready.bitrate
+                ? std::to_string(*ready.bitrate)
+                : "unknown",
+            ready.restart_ms
+                ? std::to_string(*ready.restart_ms)
+                : "unknown");
+        result.push_back(ready.name);
+    }
+    return result;
+}
+
+std::map<std::string, std::string> discoverArmBuses(
+    const robot::ti5::Ti5RobotConfig &robot_config,
+    const robot::ti5::CanConfig &can_config,
+    const std::vector<std::string> &candidate_interfaces)
+{
+    std::vector<robot::ti5::LogicalCanBus> arm_buses;
+    for (const auto &bus : robot_config.can_buses)
+    {
+        if (bus.name == "left_arm" || bus.name == "right_arm")
+        {
+            arm_buses.push_back(bus);
+        }
+    }
+    if (arm_buses.size() != 2)
+    {
+        throw std::runtime_error(
+            "robot.yaml 必须包含 left_arm 和 right_arm 两条总线");
+    }
+
+    robot::ti5::CanDiscovery discovery;
+    const auto discovery_result = discovery.discover(
+        arm_buses,
+        robot::ti5::makeDiscoveryOptions(can_config),
+        candidate_interfaces);
+    if (!discovery_result.success)
+    {
+        throw std::runtime_error("双臂 CAN 总线发现失败");
+    }
+
+    std::map<std::string, std::string> mapping;
+    for (const char *bus_name : {"left_arm", "right_arm"})
+    {
+        const auto it = std::find_if(
+            discovery_result.logical_buses.begin(),
+            discovery_result.logical_buses.end(),
+            [bus_name](const auto &bus)
+            { return bus.bus_name == bus_name; });
+        if (it == discovery_result.logical_buses.end() ||
+            !it->complete || !it->interface_name)
+        {
+            throw std::runtime_error(
+                std::string{"双臂逻辑总线不完整："} + bus_name);
+        }
+        mapping.emplace(bus_name, *it->interface_name);
+    }
+    return mapping;
+}
+
+struct JointRuntime
+{
+    robot::ti5::PhysicalJointConfig config;
+    SafetyLimit safety;
+    robot::ti5::DriverPositionLimits driver_limits;
+    std::unique_ptr<robot::ti5::CanMotor> motor;
+    double start_position{0.0};
+    double last_measured{0.0};
+    std::uint64_t last_sequence{0};
+    double lower_limit{0.0};
+    double upper_limit{0.0};
+    double delta_rad{0.0};
+    std::string skip_reason;
+};
+
+std::vector<JointRuntime> buildRuntimes(
+    const std::vector<robot::ti5::PhysicalJointConfig> &joint_configs,
+    const std::map<std::string, SafetyLimit> &safety_limits,
+    std::map<std::string, std::unique_ptr<robot::ti5::CanBus>> &buses,
+    const double delta_rad)
+{
+    std::vector<JointRuntime> result;
+    result.reserve(joint_configs.size());
+    for (const auto &config : joint_configs)
+    {
+        const auto safety = safety_limits.find(config.name);
+        if (safety == safety_limits.end())
+        {
+            throw std::runtime_error(
+                "safety.yaml 缺少软件限位：" + config.name);
+        }
+        const auto bus = buses.find(config.bus);
+        if (bus == buses.end() || !bus->second)
+        {
+            throw std::runtime_error(
+                "没有为关节创建 CAN 总线：" + config.bus);
+        }
+
+        auto motor = std::make_unique<robot::ti5::CanMotor>(
+            config.motor, *bus->second);
+        const auto queried_position = motor->queryPosition();
+        const auto csp = motor->queryCspStatus();
+        if (!queried_position || !csp)
+        {
+            throw std::runtime_error(
+                "关节初始位置查询失败：" + config.name);
+        }
+
+        const double q0 = robot::ti5::positionCountsToRadians(
+            csp->position_counts,
+            config.motor.encoder.counts_per_output_revolution);
+        if (std::abs(q0 - *queried_position) > 0.01)
+        {
+            throw std::runtime_error(
+                "0x08 与 0x41 位置不一致：" + config.name);
+        }
+
+        const auto driver_limits = motor->queryPositionLimits();
+        if (!driver_limits)
+        {
+            throw std::runtime_error(
+                "驱动器位置目标范围查询失败：" + config.name);
+        }
+
+        const auto state = motor->latestState();
+        if (!state || !state->position_counts)
+        {
+            throw std::runtime_error(
+                "没有初始 CSP 反馈：" + config.name);
+        }
+
+        JointRuntime runtime;
+        runtime.config = config;
+        runtime.safety = safety->second;
+        runtime.driver_limits = *driver_limits;
+        runtime.motor = std::move(motor);
+        runtime.start_position = q0;
+        runtime.last_measured = q0;
+        runtime.last_sequence = state->update_sequence;
+        runtime.lower_limit = std::max(
+            runtime.safety.minimum,
+            runtime.driver_limits.minimum_rad);
+        runtime.upper_limit = std::min(
+            runtime.safety.maximum,
+            runtime.driver_limits.maximum_rad);
+        runtime.delta_rad = delta_rad;
+
+        if (runtime.lower_limit >= runtime.upper_limit)
+        {
+            runtime.skip_reason = "软件限位与驱动器限位没有交集";
+        }
+        else if (q0 < runtime.lower_limit - kAllowedOvershootRad ||
+                 q0 > runtime.upper_limit + kAllowedOvershootRad)
+        {
+            runtime.skip_reason =
+                "当前位置已经超出有效限位范围";
+        }
+        result.push_back(std::move(runtime));
+    }
+    return result;
+}
+
+void runReadyProbe(JointRuntime &joint)
+{
+    robot::common::logger()->info(
+        "{}：发送当前位置 CSP 就绪探测，不改变目标位置",
+        joint.config.name);
+
+    auto next_cycle = std::chrono::steady_clock::now();
+    int fresh_cycles = 0;
+    int stale_cycles = 0;
+    for (int cycle = 0; cycle < kReadyProbeCycles; ++cycle)
+    {
+        if (stop_requested.load())
+        {
+            throw std::runtime_error("收到中断，停止方向测试");
+        }
+        next_cycle += kControlPeriod;
+        joint.motor->commandPositionCsp(joint.start_position);
+        std::this_thread::sleep_until(next_cycle);
+
+        const auto state = joint.motor->latestState();
+        if (state && state->position_counts &&
+            state->update_sequence > joint.last_sequence)
+        {
+            joint.last_sequence = state->update_sequence;
+            joint.last_measured = robot::ti5::positionCountsToRadians(
+                state->position_counts->value,
+                joint.config.motor.encoder.counts_per_output_revolution);
+            ++fresh_cycles;
+            stale_cycles = 0;
+        }
+        else
+        {
+            ++stale_cycles;
+        }
+    }
+
+    if (fresh_cycles < kReadyProbeCycles / 2 ||
+        stale_cycles >= kMaximumStaleCycles)
+    {
+        throw std::runtime_error(
+            joint.config.name +
+            " CSP 反馈不稳定，未发送非零位移");
+    }
+    if (std::abs(joint.last_measured - joint.start_position) > 0.01)
+    {
+        throw std::runtime_error(
+            joint.config.name + " 就绪探测后起点发生变化");
+    }
+}
+
+class RawTerminal final
+{
+public:
+    RawTerminal()
+    {
+        if (!::isatty(STDIN_FILENO))
+        {
+            throw std::runtime_error(
+                "方向键测试必须在交互式终端中运行");
+        }
+        if (::tcgetattr(STDIN_FILENO, &original_) != 0)
+        {
+            throw std::runtime_error("读取终端属性失败");
+        }
+
+        termios raw = original_;
+        raw.c_lflag &= static_cast<tcflag_t>(~(ICANON | ECHO));
+        raw.c_iflag &= static_cast<tcflag_t>(~(IXON | ICRNL));
+        raw.c_cc[VMIN] = 0;
+        raw.c_cc[VTIME] = 0;
+        if (::tcsetattr(STDIN_FILENO, TCSANOW, &raw) != 0)
+        {
+            throw std::runtime_error("设置终端原始模式失败");
+        }
+        active_ = true;
+    }
+
+    ~RawTerminal()
+    {
+        if (active_)
+        {
+            static_cast<void>(::tcsetattr(
+                STDIN_FILENO,
+                TCSANOW,
+                &original_));
+        }
+    }
+
+    RawTerminal(const RawTerminal &) = delete;
+    RawTerminal &operator=(const RawTerminal &) = delete;
+
+private:
+    termios original_{};
+    bool active_{false};
+};
+
+enum class InputKey
+{
+    Positive,
+    Negative,
+    Quit,
+};
+
+class ArrowInput final
+{
+public:
+    void readAvailable()
+    {
+        pollfd descriptor{
+            STDIN_FILENO,
+            POLLIN,
+            0};
+        while (::poll(&descriptor, 1, 0) > 0 &&
+               (descriptor.revents & POLLIN) != 0)
+        {
+            std::array<unsigned char, 64> buffer{};
+            const auto count = ::read(
+                STDIN_FILENO,
+                buffer.data(),
+                buffer.size());
+            if (count <= 0)
+            {
+                return;
+            }
+            input_.insert(
+                input_.end(),
+                buffer.begin(),
+                buffer.begin() + count);
+            descriptor.revents = 0;
+        }
+    }
+
+    std::optional<InputKey> nextKey()
+    {
+        if (input_.empty())
+        {
+            return std::nullopt;
+        }
+
+        if (input_.front() == 'q' || input_.front() == 'Q')
+        {
+            input_.pop_front();
+            return InputKey::Quit;
+        }
+
+        if (input_.front() == 0x1B)
+        {
+            if (input_.size() < 3)
+            {
+                return std::nullopt;
+            }
+            const auto second = input_[1];
+            const auto third = input_[2];
+            input_.pop_front();
+            input_.pop_front();
+            input_.pop_front();
+            if ((second == '[' || second == 'O') && third == 'A')
+            {
+                return InputKey::Positive;
+            }
+            if ((second == '[' || second == 'O') && third == 'B')
+            {
+                return InputKey::Negative;
+            }
+            return std::nullopt;
+        }
+
+        input_.pop_front();
+        return std::nullopt;
+    }
+
+private:
+    std::deque<unsigned char> input_;
+};
+
+void holdBestEffort(JointRuntime &joint, const double requested_position)
+{
+    if (!std::isfinite(requested_position))
+    {
+        return;
+    }
+    const double hold_position = std::clamp(
+        requested_position,
+        joint.lower_limit,
+        joint.upper_limit);
+    auto next_cycle = std::chrono::steady_clock::now();
+    for (int cycle = 0; cycle < kHoldCycles; ++cycle)
+    {
+        next_cycle += kControlPeriod;
+        try
+        {
+            joint.motor->commandPositionCsp(hold_position);
+        }
+        catch (const std::exception &)
+        {
+            break;
+        }
+        std::this_thread::sleep_until(next_cycle);
+    }
+}
+
+void runInteractiveJog(JointRuntime &joint)
+{
+    try
+    {
+        runReadyProbe(joint);
+        double target = std::clamp(
+            joint.last_measured,
+            joint.lower_limit,
+            joint.upper_limit);
+        const double motion_lower =
+            joint.lower_limit + kLimitMarginRad;
+        const double motion_upper =
+            joint.upper_limit - kLimitMarginRad;
+        const double command_lower = motion_lower < motion_upper
+                                         ? motion_lower
+                                         : joint.lower_limit;
+        const double command_upper = motion_lower < motion_upper
+                                         ? motion_upper
+                                         : joint.upper_limit;
+
+        RawTerminal terminal;
+        ArrowInput input;
+        std::cout
+            << "\n进入 " << joint.config.name
+            << "（node " << joint.config.motor.node_id << "）\n"
+            << "↑：正增量，↓：负增量；松开后约 150 ms 自动保持；q：退出测试\n"
+            << "当前目标位置：" << target << " rad\n"
+            << std::flush;
+
+        int direction = 0;
+        auto last_arrow_event =
+            std::chrono::steady_clock::now() - kKeyReleaseTimeout;
+        auto next_cycle = std::chrono::steady_clock::now();
+        std::uint64_t cycle = 0;
+        int stale_cycles = 0;
+
+        while (true)
+        {
+            if (stop_requested.load())
+            {
+                throw std::runtime_error("收到中断，停止方向测试");
+            }
+
+            next_cycle += kControlPeriod;
+            input.readAvailable();
+            while (const auto key = input.nextKey())
+            {
+                if (*key == InputKey::Quit)
+                {
+                    holdBestEffort(joint, target);
+                    std::cout << "\n已停止当前电机测试。\n";
+                    return;
+                }
+                direction = *key == InputKey::Positive ? 1 : -1;
+                last_arrow_event = std::chrono::steady_clock::now();
+            }
+
+            const auto now = std::chrono::steady_clock::now();
+            if (direction != 0 &&
+                now - last_arrow_event > kKeyReleaseTimeout)
+            {
+                direction = 0;
+            }
+
+            if (direction > 0)
+            {
+                if (target < command_upper)
+                {
+                    target = std::min(
+                        target + joint.delta_rad,
+                        command_upper);
+                }
+                else
+                {
+                    direction = 0;
+                }
+            }
+            else if (direction < 0)
+            {
+                if (target > command_lower)
+                {
+                    target = std::max(
+                        target - joint.delta_rad,
+                        command_lower);
+                }
+                else
+                {
+                    direction = 0;
+                }
+            }
+
+            joint.motor->commandPositionCsp(target);
+            std::this_thread::sleep_until(next_cycle);
+
+            const auto state = joint.motor->latestState();
+            if (!state || !state->position_counts ||
+                state->update_sequence <= joint.last_sequence)
+            {
+                ++stale_cycles;
+            }
+            else
+            {
+                joint.last_sequence = state->update_sequence;
+                joint.last_measured = robot::ti5::positionCountsToRadians(
+                    state->position_counts->value,
+                    joint.config.motor.encoder.counts_per_output_revolution);
+                stale_cycles = 0;
+            }
+
+            if (stale_cycles >= kMaximumStaleCycles)
+            {
+                throw std::runtime_error(
+                    "CSP 反馈超时：" + joint.config.name);
+            }
+            if (joint.last_measured <
+                    joint.lower_limit - kAllowedOvershootRad ||
+                joint.last_measured >
+                    joint.upper_limit + kAllowedOvershootRad)
+            {
+                throw std::runtime_error(
+                    "反馈位置超出有效限位：" + joint.config.name);
+            }
+
+            ++cycle;
+            if (cycle % 20 == 0)
+            {
+                const char direction_text =
+                    direction > 0 ? '+' : direction < 0 ? '-' : ' ';
+                std::cout
+                    << '\r'
+                    << "direction=" << direction_text
+                    << " target=" << target
+                    << " measured=" << joint.last_measured
+                    << " rad        "
+                    << std::flush;
+            }
+        }
+    }
+    catch (...)
+    {
+        holdBestEffort(joint, joint.last_measured);
+        throw;
+    }
+}
+
+void printMotorList(const std::vector<JointRuntime> &joints)
+{
+    std::cout
+        << "\n可测试电机（左臂在前，肩部到手腕）：\n";
+    for (std::size_t index = 0; index < joints.size(); ++index)
+    {
+        const auto &joint = joints[index];
+        std::cout
+            << "  " << (index + 1) << ". "
+            << joint.config.name
+            << " / " << joint.config.physical_name
+            << " / node " << joint.config.motor.node_id
+            << " / current=" << joint.last_measured << " rad";
+        if (!joint.skip_reason.empty())
+        {
+            std::cout << " / 跳过：" << joint.skip_reason;
+        }
+        std::cout << '\n';
+    }
+}
+
+std::optional<std::size_t> promptMotorSelection(
+    const std::vector<JointRuntime> &joints)
+{
+    while (true)
+    {
+        printMotorList(joints);
+        std::cout << "输入电机序号进入测试，q 退出：" << std::flush;
+        std::string answer;
+        if (!std::getline(std::cin, answer))
+        {
+            throw std::runtime_error("无法读取电机序号");
+        }
+        if (answer == "q" || answer == "Q")
+        {
+            return std::nullopt;
+        }
+
+        std::size_t parsed_end = 0;
+        unsigned long number = 0;
+        try
+        {
+            number = std::stoul(answer, &parsed_end);
+        }
+        catch (const std::exception &)
+        {
+            number = 0;
+        }
+        if (number == 0 || parsed_end != answer.size() ||
+            number > joints.size())
+        {
+            std::cout << "序号无效，请重新输入。\n";
+            continue;
+        }
+        const auto index = static_cast<std::size_t>(number - 1);
+        if (!joints[index].skip_reason.empty())
+        {
+            std::cout << "该电机当前不可测试："
+                      << joints[index].skip_reason << "\n";
+            continue;
+        }
+        return index;
+    }
+}
+
+} // namespace
+
+int main(int argc, char **argv)
+{
+    std::signal(SIGINT, signalHandler);
+    std::signal(SIGTERM, signalHandler);
+
+    try
+    {
+        const auto options = parseOptions(argc, argv);
+        requireExplicitConfirmation();
+        SingleProcessLock process_lock;
+        requireExclusiveController();
+
+        robot::common::logger()->info(
+            "TI5 双臂电机方向标注测试：启动并拉起本体 CAN");
+
+        const auto robot_config = robot::ti5::loadRobotConfig(
+            configPath("robot.yaml"));
+        const auto can_config = robot::ti5::loadCanConfig(
+            configPath("can.yaml"));
+        const auto safety_limits = loadSafetyLimits(
+            configPath("safety.yaml"));
+        const auto ordered_joints = orderedArmJoints(robot_config);
+
+        const auto candidate_interfaces = prepareBodyCan(can_config);
+        const auto mapping = discoverArmBuses(
+            robot_config,
+            can_config,
+            candidate_interfaces);
+
+        std::map<std::string, std::unique_ptr<robot::ti5::CanBus>> buses;
+        for (const auto &[bus_name, interface_name] : mapping)
+        {
+            robot::common::logger()->info(
+                "方向测试总线映射：{} -> {}",
+                bus_name,
+                interface_name);
+            buses.emplace(
+                bus_name,
+                std::make_unique<robot::ti5::CanBus>(interface_name));
+        }
+
+        auto joints = buildRuntimes(
+            ordered_joints,
+            safety_limits,
+            buses,
+            options.delta_rad);
+
+        std::cout
+            << "\n准备完成；程序只测试双臂 14 轴，不测试头部、腰部和折叠轴。\n"
+            << "输入编号选择电机；进入后 ↑/↓ 为正负增量，q 返回列表。\n"
+            << "程序不会写零位、不会自动发送 STOP/disable。\n";
+        const auto selection = promptMotorSelection(joints);
+        if (selection)
+        {
+            robot::common::logger()->info(
+                "开始交互点动 {}（CAN node {}）",
+                joints[*selection].config.name,
+                joints[*selection].config.motor.node_id);
+            runInteractiveJog(joints[*selection]);
+        }
+
+        robot::common::logger()->info(
+            "方向测试结束；未写入零位或方向配置");
+        return 0;
+    }
+    catch (const std::exception &error)
+    {
+        robot::common::logger()->error(
+            "方向测试失败：{}",
+            error.what());
+        return 1;
+    }
+}

@@ -6,6 +6,12 @@
 
 namespace robot::ti5
 {
+    enum class PositionLimitKind
+    {
+        Maximum,
+        Minimum
+    };
+
     // 0x08 当前位置查询响应的协议层表示。
     //
     // 这是 CAN 帧解码后的原始反馈，不包含运行时聚合状态。
@@ -42,6 +48,18 @@ namespace robot::ti5
 
     // 解码 0x08 响应中的 little-endian int32 位置计数。
     std::int32_t decodePositionCounts(const robot::can::CanFrame &frame);
+
+    // 编码并解析 0x1A/0x1B 驱动器最大/最小位置查询。
+    robot::can::CanFrame encodePositionLimitQuery(
+        std::uint16_t node_id,
+        PositionLimitKind kind);
+    bool isPositionLimitQueryResponse(
+        const robot::can::CanFrame &frame,
+        std::uint16_t expected_node_id,
+        PositionLimitKind kind) noexcept;
+    std::int32_t decodePositionLimitCounts(
+        const robot::can::CanFrame &frame,
+        PositionLimitKind kind);
 
     // 编码 0x41 CSP 查询请求帧。
     robot::can::CanFrame encodeCspQuery(std::uint16_t node_id);

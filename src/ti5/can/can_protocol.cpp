@@ -16,6 +16,8 @@ namespace
 
     // TI5 T170C 应用层命令码。
     constexpr std::uint8_t kPositionQueryCommand = 0x08;
+    constexpr std::uint8_t kMaximumPositionQueryCommand = 0x1A;
+    constexpr std::uint8_t kMinimumPositionQueryCommand = 0x1B;
     constexpr std::uint8_t kCspQueryCommand = 0x41;
     constexpr std::uint8_t kPositionCspCommand = 0x44;
 
@@ -86,6 +88,23 @@ namespace
                frame.data[0] == kPositionQueryCommand;
     }
 
+    std::uint8_t positionLimitCommand(
+        const robot::ti5::PositionLimitKind kind) noexcept
+    {
+        return kind == robot::ti5::PositionLimitKind::Maximum
+                   ? kMaximumPositionQueryCommand
+                   : kMinimumPositionQueryCommand;
+    }
+
+    bool isPositionLimitQueryResponseFormat(
+        const robot::can::CanFrame &frame,
+        const robot::ti5::PositionLimitKind kind) noexcept
+    {
+        return isStandardCanId(frame.id) &&
+               frame.data_length == 5 &&
+               frame.data[0] == positionLimitCommand(kind);
+    }
+
     void validatePositionQueryResponse(const robot::can::CanFrame &frame)
     {
         if (!isPositionQueryResponseFormat(frame))
@@ -135,6 +154,41 @@ namespace robot::ti5
     std::int32_t decodePositionCounts(const robot::can::CanFrame &frame)
     {
         validatePositionQueryResponse(frame);
+        return readInt32LittleEndian(frame.data, 1);
+    }
+
+    robot::can::CanFrame encodePositionLimitQuery(
+        const std::uint16_t node_id,
+        const PositionLimitKind kind)
+    {
+        validateNodeId(node_id);
+
+        robot::can::CanFrame frame{};
+        frame.id = node_id;
+        frame.data_length = 1;
+        frame.data[0] = positionLimitCommand(kind);
+        return frame;
+    }
+
+    bool isPositionLimitQueryResponse(
+        const robot::can::CanFrame &frame,
+        const std::uint16_t expected_node_id,
+        const PositionLimitKind kind) noexcept
+    {
+        return isStandardCanId(expected_node_id) &&
+               isPositionLimitQueryResponseFormat(frame, kind) &&
+               frame.id == expected_node_id;
+    }
+
+    std::int32_t decodePositionLimitCounts(
+        const robot::can::CanFrame &frame,
+        const PositionLimitKind kind)
+    {
+        if (!isPositionLimitQueryResponseFormat(frame, kind))
+        {
+            throw std::invalid_argument(
+                "Invalid TI5 position-limit response frame");
+        }
         return readInt32LittleEndian(frame.data, 1);
     }
 

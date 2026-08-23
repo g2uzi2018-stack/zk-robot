@@ -68,6 +68,32 @@ std::optional<CspFeedback> CanMotor::queryCspStatus()
     return bus_.queryCsp(node_id_, std::chrono::milliseconds{50});
 }
 
+std::optional<DriverPositionLimits> CanMotor::queryPositionLimits()
+{
+    const auto maximum = bus_.queryPositionLimit(
+        node_id_,
+        PositionLimitKind::Maximum,
+        std::chrono::milliseconds{50});
+    const auto minimum = bus_.queryPositionLimit(
+        node_id_,
+        PositionLimitKind::Minimum,
+        std::chrono::milliseconds{50});
+    if (!minimum || !maximum || *minimum > *maximum)
+    {
+        return std::nullopt;
+    }
+
+    return DriverPositionLimits{
+        *minimum,
+        *maximum,
+        positionCountsToRadians(
+            *minimum,
+            encoder_.counts_per_output_revolution),
+        positionCountsToRadians(
+            *maximum,
+            encoder_.counts_per_output_revolution)};
+}
+
 std::optional<MotorState> CanMotor::latestState()
 {
     bus_.collectPendingFeedback();

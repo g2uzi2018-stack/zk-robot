@@ -349,8 +349,14 @@ DiscoveryResult CanDiscovery::discover(
             "TI5 Discovery candidate interface list contains no valid names");
     }
 
+    // Interface indices and logical-bus indices are different domains.  In
+    // particular, a filtered discovery may have three logical buses while the
+    // matching device is candidate interface index 3.  Using
+    // logical_buses.size() as the sentinel would then discard that valid
+    // mapping.
+    const std::size_t unassigned_interface = result.interfaces.size();
     std::vector<std::size_t> assigned_interface(
-        logical_buses.size(), logical_buses.size());
+        logical_buses.size(), unassigned_interface);
     std::vector<bool> bus_conflict(logical_buses.size(), false);
     bool unique_match_failure = false;
 
@@ -400,7 +406,7 @@ DiscoveryResult CanDiscovery::discover(
         }
 
         const auto bus_index = candidates.front();
-        if (assigned_interface[bus_index] != logical_buses.size())
+        if (assigned_interface[bus_index] != unassigned_interface)
         {
             unique_match_failure = true;
             bus_conflict[bus_index] = true;
@@ -419,7 +425,7 @@ DiscoveryResult CanDiscovery::discover(
         LogicalBusDiscoveryResult bus_result;
         bus_result.bus_name = logical_buses[bus_index].name;
 
-        if (assigned_interface[bus_index] != logical_buses.size() &&
+        if (assigned_interface[bus_index] != unassigned_interface &&
             !bus_conflict[bus_index])
         {
             const auto &interface_result = result.interfaces[assigned_interface[bus_index]];

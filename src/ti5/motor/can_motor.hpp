@@ -9,6 +9,14 @@
 namespace robot::ti5
 {
 
+struct DriverPositionLimits
+{
+    std::int32_t minimum_counts{0};
+    std::int32_t maximum_counts{0};
+    double minimum_rad{0.0};
+    double maximum_rad{0.0};
+};
+
 // 一个实际 T170C 物理电机的薄运行时封装。
 //
 // CanMotor 不拥有 SocketCan，也不直接 receive/read；多个 Motor 通过同一个
@@ -21,10 +29,12 @@ public:
     std::optional<double> queryPosition();
     std::optional<double> readPosition();
     std::optional<CspFeedback> queryCspStatus();
+    std::optional<DriverPositionLimits> queryPositionLimits();
     std::optional<MotorState> latestState();
     std::optional<MotorState> latestFeedback();
 
-    // 只编码并发送 0x44 Position CSP；不在 main 或实机测试中调用。
+    // 只编码并发送 0x44 Position CSP。调用者必须先完成独占控制、
+    // 当前位置、软限位、驱动器目标范围和反馈新鲜度检查。
     void commandPositionCsp(double position_rad);
 
     std::uint16_t nodeId() const noexcept;

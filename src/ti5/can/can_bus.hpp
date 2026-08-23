@@ -110,6 +110,12 @@ public:
         std::uint16_t node_id,
         std::chrono::milliseconds timeout);
 
+    // Send 0x1A/0x1B and return the driver's raw position limit.
+    std::optional<std::int32_t> queryPositionLimit(
+        std::uint16_t node_id,
+        PositionLimitKind kind,
+        std::chrono::milliseconds timeout);
+
     // Send 0x41 only when the node is explicitly configured for CSP.
     std::optional<CspFeedback> queryCsp(
         std::uint16_t node_id,

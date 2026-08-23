@@ -273,6 +273,58 @@ std::optional<PositionQueryFeedback> CanBus::queryPosition(
     }
 }
 
+std::optional<std::int32_t> CanBus::queryPositionLimit(
+    const std::uint16_t node_id,
+    const PositionLimitKind kind,
+    const std::chrono::milliseconds timeout)
+{
+    validateNodeId(node_id);
+    registerNode(node_id);
+    if (timeout.count() < 0)
+    {
+        throw std::invalid_argument("CanBus query timeout must not be negative");
+    }
+
+    collectPendingFeedback();
+    send(encodePositionLimitQuery(node_id, kind));
+
+    if (timeout.count() == 0)
+    {
+        return std::nullopt;
+    }
+
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    while (true)
+    {
+        const auto now = std::chrono::steady_clock::now();
+        if (now >= deadline)
+        {
+            return std::nullopt;
+        }
+
+        auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
+            deadline - now);
+        if (remaining.count() <= 0)
+        {
+            remaining = std::chrono::milliseconds{1};
+        }
+
+        const auto frame = receive(remaining);
+        if (!frame)
+        {
+            return std::nullopt;
+        }
+        if (isPositionLimitQueryResponse(*frame, node_id, kind))
+        {
+            return decodePositionLimitCounts(*frame, kind);
+        }
+
+        static_cast<void>(decodeAndStore(
+            *frame,
+            std::chrono::steady_clock::now()));
+    }
+}
+
 std::optional<CspFeedback> CanBus::queryCsp(
     const std::uint16_t node_id,
     const std::chrono::milliseconds timeout)

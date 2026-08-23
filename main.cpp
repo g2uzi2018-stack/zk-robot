@@ -177,19 +177,57 @@ int main()
                 selector.value,
                 selector.expected_channels});
 
-        // 本测试绝不 down/up 或重配 CAN，避免影响机器人其他总线。
-        std::vector<std::string> candidate_interfaces;
-        for (const auto &interface : body_interfaces)
-        {
-            const auto ready = interface_manager.inspect(interface.name);
-            if (!ready.up || !ready.bitrate ||
-                *ready.bitrate != can_config.socketcan.bitrate)
-            {
-                throw std::runtime_error(
-                    interface.name + " must already be UP at 1 Mbps");
-            }
-            candidate_interfaces.push_back(interface.name);
-        }
+// 启动阶段统一初始化 TI5 本体 CAN。
+// 这里只在程序启动时进行一次 down -> configure -> up，
+// 进入运动控制后不再重配 CAN。
+const can::CanInterfaceSettings can_settings{
+    can_config.socketcan.bitrate,
+    static_cast<std::uint32_t>(
+        can_config.socketcan.restart_ms.count()),
+    can_config.socketcan.reconfigure_wait,
+    can_config.socketcan.startup_wait,
+    can_config.socketcan.validate_bitrate};
+
+std::vector<std::string> candidate_interfaces;
+candidate_interfaces.reserve(body_interfaces.size());
+
+for (const auto &interface : body_interfaces)
+{
+    common::logger()->info(
+        "Preparing TI5 body CAN interface {}",
+        interface.name);
+
+    const auto ready =
+        interface_manager.prepare(
+            interface.name,
+            can_settings);
+
+    if (!ready.up)
+    {
+        throw std::runtime_error(
+            interface.name + " failed to come UP");
+    }
+
+    if (can_config.socketcan.validate_bitrate &&
+        (!ready.bitrate ||
+         *ready.bitrate != can_config.socketcan.bitrate))
+    {
+        throw std::runtime_error(
+            interface.name + " bitrate mismatch after initialization");
+    }
+
+    common::logger()->info(
+        "{} ready: bitrate={}, restart-ms={}",
+        ready.name,
+        ready.bitrate
+            ? std::to_string(*ready.bitrate)
+            : "unknown",
+        ready.restart_ms
+            ? std::to_string(*ready.restart_ms)
+            : "unknown");
+
+    candidate_interfaces.push_back(interface.name);
+}
 
         ti5::CanDiscovery discovery;
         const auto discovery_result = discovery.discover(

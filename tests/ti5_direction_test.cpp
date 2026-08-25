@@ -489,6 +489,7 @@ struct JointRuntime
     double upper_limit{0.0};
     double delta_rad{0.0};
     std::optional<double> driver_boundary_capture_target;
+    bool driver_boundary_capture_command_sent{false};
     std::string skip_reason;
 };
 
@@ -798,6 +799,7 @@ void captureAtDriverBoundary(
     double previous_measured = original_position;
     double maximum_observed_speed = 0.0;
     int stale_cycles = 0;
+    auto previous_feedback_time = std::chrono::steady_clock::now();
     auto next_cycle = std::chrono::steady_clock::now();
     for (int cycle = 0;
          cycle < kDriverBoundaryCaptureCycles;
@@ -811,6 +813,7 @@ void captureAtDriverBoundary(
 
         next_cycle += kControlPeriod;
         joint.motor->commandPositionCsp(capture_target);
+        joint.driver_boundary_capture_command_sent = true;
         std::this_thread::sleep_until(next_cycle);
 
         const auto state = joint.motor->latestState();
@@ -828,16 +831,31 @@ void captureAtDriverBoundary(
         }
 
         stale_cycles = 0;
+        const auto feedback_time = std::chrono::steady_clock::now();
+        const auto previous_sequence = joint.last_sequence;
+        const auto sequence_gap =
+            state->update_sequence - previous_sequence;
         joint.last_sequence = state->update_sequence;
         joint.last_measured = robot::ti5::positionCountsToRadians(
             state->position_counts->value,
             joint.config.motor.encoder.counts_per_output_revolution);
 
+        const double feedback_interval_seconds =
+            std::chrono::duration<double>(
+                feedback_time - previous_feedback_time)
+                .count();
+        if (!(feedback_interval_seconds > 0.0))
+        {
+            throw std::runtime_error(
+                joint.config.name +
+                " 的边界接管反馈时间间隔无效");
+        }
+        const double position_step =
+            joint.last_measured - previous_measured;
+        const double observed_speed =
+            std::abs(position_step) / feedback_interval_seconds;
         maximum_observed_speed = std::max(
-            maximum_observed_speed,
-            std::abs(joint.last_measured - previous_measured) /
-                std::chrono::duration<double>(kControlPeriod).count());
-        previous_measured = joint.last_measured;
+            maximum_observed_speed, observed_speed);
 
         if (joint.last_measured <
                 std::min(original_position, capture_target) -
@@ -850,13 +868,25 @@ void captureAtDriverBoundary(
                 joint.config.name +
                 " 的边界接管反馈越过计划包络");
         }
-        if (maximum_observed_speed >
+        if (observed_speed >
             kMaximumDriverBoundaryCaptureSpeedRadPerSecond)
         {
-            throw std::runtime_error(
-                joint.config.name +
-                " 的边界接管观测速度超过 0.20 rad/s");
+            std::ostringstream message;
+            message << std::fixed << std::setprecision(6)
+                    << joint.config.name
+                    << " 的边界接管观测速度=" << observed_speed
+                    << " rad/s，超过上限 "
+                    << kMaximumDriverBoundaryCaptureSpeedRadPerSecond
+                    << " rad/s；反馈 " << previous_measured
+                    << " -> " << joint.last_measured
+                    << " rad，位移=" << position_step
+                    << " rad，实际 dt="
+                    << feedback_interval_seconds
+                    << " s，sequence_gap=" << sequence_gap;
+            throw std::runtime_error(message.str());
         }
+        previous_measured = joint.last_measured;
+        previous_feedback_time = feedback_time;
     }
 
     const auto final_position = joint.motor->queryPosition();
@@ -873,6 +903,7 @@ void captureAtDriverBoundary(
 
     joint.start_position = *final_position;
     joint.last_measured = *final_position;
+    joint.driver_boundary_capture_command_sent = false;
     joint.driver_boundary_capture_target.reset();
 
     if (const auto final_state = joint.motor->latestState();
@@ -1232,7 +1263,60 @@ void runInteractiveJog(
     }
     catch (...)
     {
-        holdBestEffort(joint, joint.last_measured);
+        if (joint.driver_boundary_capture_target &&
+            joint.driver_boundary_capture_command_sent)
+        {
+            const double hold_target =
+                *joint.driver_boundary_capture_target;
+            robot::common::logger()->warn(
+                "{} 边界接管异常；为避免突然释放，继续向已下达的边界内目标 {:.6f} rad 发送保护性 HOLD {:.2f} 秒；不发送 STOP，后续方向点动已取消",
+                joint.config.name,
+                hold_target,
+                static_cast<double>(kHoldCycles) *
+                    std::chrono::duration<double>(kControlPeriod).count());
+            holdBestEffort(joint, hold_target);
+            try
+            {
+                const auto final_position =
+                    joint.motor->queryPosition();
+                const auto final_status =
+                    queryDriverStatus(joint, mapping);
+                if (final_position)
+                {
+                    robot::common::logger()->warn(
+                        "{} 异常后保护性 HOLD 状态：位置 {:.6f} rad、mode={}、fault=0x{:08X}；程序退出后仍不得假定电机已释放",
+                        joint.config.name,
+                        *final_position,
+                        final_status.mode,
+                        static_cast<std::uint32_t>(final_status.fault));
+                }
+                else
+                {
+                    robot::common::logger()->error(
+                        "{} 异常后保护性 HOLD 的最终位置查询失败；mode={}、fault=0x{:08X}",
+                        joint.config.name,
+                        final_status.mode,
+                        static_cast<std::uint32_t>(final_status.fault));
+                }
+            }
+            catch (const std::exception &status_error)
+            {
+                robot::common::logger()->error(
+                    "{} 异常后保护性 HOLD 状态复核失败：{}；不得假定电机已释放",
+                    joint.config.name,
+                    status_error.what());
+            }
+        }
+        else if (joint.driver_boundary_capture_target)
+        {
+            robot::common::logger()->warn(
+                "{} 在边界接管目标发送前失败；未发送保护性 HOLD 或 STOP，后续方向点动已取消",
+                joint.config.name);
+        }
+        else
+        {
+            holdBestEffort(joint, joint.last_measured);
+        }
         throw;
     }
 }

@@ -1,3 +1,4 @@
+#include "can/socket_can.hpp"
 #include "can/can_interface_manager.hpp"
 #include "common/logger.hpp"
 
@@ -18,6 +19,7 @@
 #include <csignal>
 #include <cstdint>
 #include <cstdlib>
+#include <cstring>
 #include <deque>
 #include <filesystem>
 #include <fstream>
@@ -51,9 +53,24 @@ constexpr double kMinimumDeltaRad = 0.0001;
 constexpr double kMaximumDeltaRad = 0.005;
 constexpr double kLimitMarginRad = 0.02;
 constexpr double kAllowedOvershootRad = 0.02;
+constexpr int kDriverBoundaryCaptureCycles = 250;
+constexpr double kDriverBoundaryCaptureOvershootRad = 0.01;
+constexpr double kMaximumDriverBoundaryCaptureRad = 0.12;
+constexpr double kDriverBoundaryCaptureMarginRad = 0.005;
+constexpr double kMaximumShoulderRollRecoveryTravelRad = 1.62;
+constexpr double kMaximumDriverBoundaryCaptureSpeedRadPerSecond = 0.20;
 constexpr auto kKeyReleaseTimeout = 150ms;
 
-constexpr std::array<const char *, 14> kDirectionOrder{
+constexpr std::array<const char *, 3> kDirectionBusOrder{
+    "head",
+    "left_arm",
+    "right_arm",
+};
+
+constexpr std::array<const char *, 17> kDirectionOrder{
+    "neck_yaw",
+    "neck_pitch",
+    "neck_roll",
     "left_shoulder_pitch",
     "left_shoulder_roll",
     "left_shoulder_yaw",
@@ -217,7 +234,7 @@ void printUsage(const char *program)
         << "用法：\n"
         << "  " << program << " [--delta-rad 数值]\n\n"
         << "默认每个 10 ms 控制周期移动 ±0.001 rad。\n"
-        << "测试顺序：左臂由肩到腕，再右臂由肩到腕。\n"
+        << "测试顺序：头部 Yaw/Pitch/Roll，再从左臂到右臂，各臂由肩到腕。\n"
         << "--delta-rad     设置按住方向键时每周期的增量，范围 0.0001～0.005 rad。\n";
 }
 
@@ -307,13 +324,15 @@ std::map<std::string, SafetyLimit> loadSafetyLimits(
     return result;
 }
 
-std::vector<robot::ti5::PhysicalJointConfig> orderedArmJoints(
+std::vector<robot::ti5::PhysicalJointConfig> orderedDirectionJoints(
     const robot::ti5::Ti5RobotConfig &robot_config)
 {
     std::map<std::string, robot::ti5::PhysicalJointConfig> by_name;
     for (const auto &joint : robot_config.joints)
     {
-        if (joint.bus == "left_arm" || joint.bus == "right_arm")
+        if (joint.bus == "head" ||
+            joint.bus == "left_arm" ||
+            joint.bus == "right_arm")
         {
             if (!by_name.emplace(joint.name, joint).second)
             {
@@ -404,37 +423,41 @@ std::vector<std::string> prepareBodyCan(
     return result;
 }
 
-std::map<std::string, std::string> discoverArmBuses(
+std::map<std::string, std::string> discoverDirectionBuses(
     const robot::ti5::Ti5RobotConfig &robot_config,
     const robot::ti5::CanConfig &can_config,
     const std::vector<std::string> &candidate_interfaces)
 {
-    std::vector<robot::ti5::LogicalCanBus> arm_buses;
+    std::vector<robot::ti5::LogicalCanBus> direction_buses;
     for (const auto &bus : robot_config.can_buses)
     {
-        if (bus.name == "left_arm" || bus.name == "right_arm")
+        if (std::any_of(
+                kDirectionBusOrder.begin(),
+                kDirectionBusOrder.end(),
+                [&bus](const char *name)
+                { return bus.name == name; }))
         {
-            arm_buses.push_back(bus);
+            direction_buses.push_back(bus);
         }
     }
-    if (arm_buses.size() != 2)
+    if (direction_buses.size() != kDirectionBusOrder.size())
     {
         throw std::runtime_error(
-            "robot.yaml 必须包含 left_arm 和 right_arm 两条总线");
+            "robot.yaml 必须包含 head、left_arm 和 right_arm 三条总线");
     }
 
     robot::ti5::CanDiscovery discovery;
     const auto discovery_result = discovery.discover(
-        arm_buses,
+        direction_buses,
         robot::ti5::makeDiscoveryOptions(can_config),
         candidate_interfaces);
     if (!discovery_result.success)
     {
-        throw std::runtime_error("双臂 CAN 总线发现失败");
+        throw std::runtime_error("头部与双臂 CAN 总线发现失败");
     }
 
     std::map<std::string, std::string> mapping;
-    for (const char *bus_name : {"left_arm", "right_arm"})
+    for (const char *bus_name : kDirectionBusOrder)
     {
         const auto it = std::find_if(
             discovery_result.logical_buses.begin(),
@@ -445,7 +468,8 @@ std::map<std::string, std::string> discoverArmBuses(
             !it->complete || !it->interface_name)
         {
             throw std::runtime_error(
-                std::string{"双臂逻辑总线不完整："} + bus_name);
+                std::string{"头部与双臂逻辑总线不完整："} +
+                bus_name);
         }
         mapping.emplace(bus_name, *it->interface_name);
     }
@@ -464,8 +488,118 @@ struct JointRuntime
     double lower_limit{0.0};
     double upper_limit{0.0};
     double delta_rad{0.0};
+    std::optional<double> driver_boundary_capture_target;
     std::string skip_reason;
 };
+
+struct DriverStatus
+{
+    std::int32_t mode{0};
+    std::int32_t fault{0};
+};
+
+std::int32_t decodeLittleEndianInt32(
+    const std::array<std::uint8_t, 8> &data,
+    const std::size_t offset)
+{
+    const std::uint32_t raw =
+        static_cast<std::uint32_t>(data[offset]) |
+        (static_cast<std::uint32_t>(data[offset + 1]) << 8U) |
+        (static_cast<std::uint32_t>(data[offset + 2]) << 16U) |
+        (static_cast<std::uint32_t>(data[offset + 3]) << 24U);
+    std::int32_t result{0};
+    static_assert(sizeof(result) == sizeof(raw));
+    std::memcpy(&result, &raw, sizeof(result));
+    return result;
+}
+
+std::optional<std::int32_t> queryInt32Status(
+    robot::can::SocketCan &socket,
+    const std::uint16_t node_id,
+    const std::uint8_t command,
+    const std::chrono::milliseconds timeout)
+{
+    while (socket.receive(0ms))
+    {
+    }
+
+    robot::can::CanFrame query{};
+    query.id = node_id;
+    query.data_length = 1;
+    query.data[0] = command;
+    socket.send(query);
+
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    while (std::chrono::steady_clock::now() < deadline)
+    {
+        auto remaining = std::chrono::duration_cast<
+            std::chrono::milliseconds>(
+            deadline - std::chrono::steady_clock::now());
+        if (remaining.count() <= 0)
+        {
+            remaining = 1ms;
+        }
+        const auto frame = socket.receive(remaining);
+        if (!frame)
+        {
+            return std::nullopt;
+        }
+        if (frame->id == node_id &&
+            frame->data_length == 5 &&
+            frame->data[0] == command)
+        {
+            return decodeLittleEndianInt32(frame->data, 1);
+        }
+    }
+    return std::nullopt;
+}
+
+DriverStatus queryDriverStatus(
+    const JointRuntime &joint,
+    const std::map<std::string, std::string> &mapping)
+{
+    robot::can::SocketCan socket{mapping.at(joint.config.bus)};
+    const auto mode = queryInt32Status(
+        socket,
+        joint.config.motor.node_id,
+        0x03,
+        80ms);
+    const auto fault = queryInt32Status(
+        socket,
+        joint.config.motor.node_id,
+        0x0A,
+        80ms);
+    if (!mode || !fault)
+    {
+        throw std::runtime_error(
+            joint.config.name + " 的模式或故障查询失败");
+    }
+    return DriverStatus{*mode, *fault};
+}
+
+bool isShoulderRoll(const std::string &joint_name)
+{
+    return joint_name == "left_shoulder_roll" ||
+           joint_name == "right_shoulder_roll";
+}
+
+bool isKnownShoulderRecoveryCorridor(
+    const robot::ti5::PhysicalJointConfig &joint,
+    const robot::ti5::DriverPositionLimits &driver_limits,
+    const double position)
+{
+    if (!isShoulderRoll(joint.name))
+    {
+        return false;
+    }
+    if (joint.name == "left_shoulder_roll")
+    {
+        return position < driver_limits.minimum_rad &&
+               position >= -kMaximumShoulderRollRecoveryTravelRad;
+    }
+    return position > driver_limits.maximum_rad &&
+           position <= kMaximumShoulderRollRecoveryTravelRad;
+}
 
 std::vector<JointRuntime> buildRuntimes(
     const std::vector<robot::ti5::PhysicalJointConfig> &joint_configs,
@@ -539,12 +673,83 @@ std::vector<JointRuntime> buildRuntimes(
             runtime.driver_limits.maximum_rad);
         runtime.delta_rad = delta_rad;
 
-        if (runtime.lower_limit >= runtime.upper_limit)
+        const bool outside_driver_limit =
+            q0 < runtime.driver_limits.minimum_rad ||
+            q0 > runtime.driver_limits.maximum_rad;
+        bool known_shoulder_recovery = false;
+        if (isKnownShoulderRecoveryCorridor(
+                config,
+                runtime.driver_limits,
+                q0))
+        {
+            const double capture_lower =
+                runtime.driver_limits.minimum_rad +
+                kDriverBoundaryCaptureMarginRad;
+            const double capture_upper =
+                runtime.driver_limits.maximum_rad -
+                kDriverBoundaryCaptureMarginRad;
+            if (capture_lower >= capture_upper)
+            {
+                runtime.skip_reason =
+                    "驱动器目标范围过窄，无法建立边界接管目标";
+            }
+            else
+            {
+                const double capture_target = std::clamp(
+                    q0, capture_lower, capture_upper);
+                const double capture_distance =
+                    std::abs(capture_target - q0);
+                if (capture_target < runtime.safety.minimum ||
+                    capture_target > runtime.safety.maximum)
+                {
+                    runtime.skip_reason =
+                        "边界接管目标超出 safety.yaml 软件限位";
+                }
+                else if (capture_distance >
+                         kMaximumDriverBoundaryCaptureRad)
+                {
+                    std::ostringstream reason;
+                    reason << std::fixed << std::setprecision(6)
+                           << "边界内目标=" << capture_target
+                           << " rad，实际接管距离=" << capture_distance
+                           << " rad，超过上限 "
+                           << kMaximumDriverBoundaryCaptureRad << " rad";
+                    runtime.skip_reason = reason.str();
+                }
+                else if (capture_distance > 1e-6)
+                {
+                    runtime.driver_boundary_capture_target =
+                        capture_target;
+                    known_shoulder_recovery = true;
+                }
+            }
+        }
+
+        if (runtime.skip_reason.empty() &&
+            runtime.lower_limit >= runtime.upper_limit)
         {
             runtime.skip_reason = "软件限位与驱动器限位没有交集";
         }
-        else if (q0 < runtime.lower_limit - kAllowedOvershootRad ||
+        else if (runtime.skip_reason.empty() && outside_driver_limit &&
+                 !known_shoulder_recovery)
+        {
+            std::ostringstream reason;
+            reason << std::fixed << std::setprecision(6)
+                   << "当前位置=" << q0
+                   << " rad 超出驱动器目标范围";
+            if (isShoulderRoll(config.name))
+            {
+                reason << "，且不在正确侧的肩横滚被动下垂包络 ±"
+                       << kMaximumShoulderRollRecoveryTravelRad
+                       << " rad 内";
+            }
+            runtime.skip_reason = reason.str();
+        }
+        else if (runtime.skip_reason.empty() &&
+                 !known_shoulder_recovery &&
+                 (q0 < runtime.lower_limit - kAllowedOvershootRad ||
                  q0 > runtime.upper_limit + kAllowedOvershootRad)
+        )
         {
             runtime.skip_reason =
                 "当前位置已经超出有效限位范围";
@@ -552,6 +757,135 @@ std::vector<JointRuntime> buildRuntimes(
         result.push_back(std::move(runtime));
     }
     return result;
+}
+
+void captureAtDriverBoundary(
+    JointRuntime &joint,
+    const std::map<std::string, std::string> &mapping)
+{
+    if (!joint.driver_boundary_capture_target)
+    {
+        return;
+    }
+
+    const double original_position = joint.start_position;
+    const double capture_target =
+        *joint.driver_boundary_capture_target;
+    const double planned_distance =
+        std::abs(capture_target - original_position);
+    if (planned_distance > kMaximumDriverBoundaryCaptureRad)
+    {
+        throw std::runtime_error(
+            joint.config.name + " 的驱动器边界接管距离超过上限");
+    }
+
+    const auto initial_status = queryDriverStatus(joint, mapping);
+    if (initial_status.fault != 0 ||
+        (initial_status.mode != 0 && initial_status.mode != 8))
+    {
+        throw std::runtime_error(
+            joint.config.name +
+            " 当前 mode/fault 不允许进行驱动器边界接管");
+    }
+
+    robot::common::logger()->warn(
+        "{} 开始驱动器边界接管：{:.6f} -> {:.6f} rad，计划位移 {:.6f} rad",
+        joint.config.name,
+        original_position,
+        capture_target,
+        planned_distance);
+
+    double previous_measured = original_position;
+    double maximum_observed_speed = 0.0;
+    int stale_cycles = 0;
+    auto next_cycle = std::chrono::steady_clock::now();
+    for (int cycle = 0;
+         cycle < kDriverBoundaryCaptureCycles;
+         ++cycle)
+    {
+        if (stop_requested.load())
+        {
+            throw std::runtime_error(
+                "操作者在驱动器边界接管阶段中止");
+        }
+
+        next_cycle += kControlPeriod;
+        joint.motor->commandPositionCsp(capture_target);
+        std::this_thread::sleep_until(next_cycle);
+
+        const auto state = joint.motor->latestState();
+        if (!state || !state->position_counts ||
+            state->update_sequence <= joint.last_sequence)
+        {
+            ++stale_cycles;
+            if (stale_cycles >= kMaximumStaleCycles)
+            {
+                throw std::runtime_error(
+                    joint.config.name +
+                    " 的驱动器边界接管反馈连续失效");
+            }
+            continue;
+        }
+
+        stale_cycles = 0;
+        joint.last_sequence = state->update_sequence;
+        joint.last_measured = robot::ti5::positionCountsToRadians(
+            state->position_counts->value,
+            joint.config.motor.encoder.counts_per_output_revolution);
+
+        maximum_observed_speed = std::max(
+            maximum_observed_speed,
+            std::abs(joint.last_measured - previous_measured) /
+                std::chrono::duration<double>(kControlPeriod).count());
+        previous_measured = joint.last_measured;
+
+        if (joint.last_measured <
+                std::min(original_position, capture_target) -
+                    kDriverBoundaryCaptureOvershootRad ||
+            joint.last_measured >
+                std::max(original_position, capture_target) +
+                    kDriverBoundaryCaptureOvershootRad)
+        {
+            throw std::runtime_error(
+                joint.config.name +
+                " 的边界接管反馈越过计划包络");
+        }
+        if (maximum_observed_speed >
+            kMaximumDriverBoundaryCaptureSpeedRadPerSecond)
+        {
+            throw std::runtime_error(
+                joint.config.name +
+                " 的边界接管观测速度超过 0.20 rad/s");
+        }
+    }
+
+    const auto final_position = joint.motor->queryPosition();
+    const auto final_status = queryDriverStatus(joint, mapping);
+    if (!final_position ||
+        std::abs(*final_position - capture_target) > 0.012 ||
+        final_status.mode != 8 ||
+        final_status.fault != 0)
+    {
+        throw std::runtime_error(
+            joint.config.name +
+            " 未完成驱动器边界接管，禁止继续方向测试");
+    }
+
+    joint.start_position = *final_position;
+    joint.last_measured = *final_position;
+    joint.driver_boundary_capture_target.reset();
+
+    if (const auto final_state = joint.motor->latestState();
+        final_state && final_state->update_sequence > joint.last_sequence)
+    {
+        joint.last_sequence = final_state->update_sequence;
+    }
+
+    robot::common::logger()->info(
+        "{} 驱动器边界接管完成：mode=8、fault=0，最大观测速度 {:.6f} rad/s，当前位置 {:.6f} rad",
+        joint.config.name,
+        maximum_observed_speed,
+        *final_position);
 }
 
 void runReadyProbe(JointRuntime &joint)
@@ -755,10 +1089,13 @@ void holdBestEffort(JointRuntime &joint, const double requested_position)
     }
 }
 
-void runInteractiveJog(JointRuntime &joint)
+void runInteractiveJog(
+    JointRuntime &joint,
+    const std::map<std::string, std::string> &mapping)
 {
     try
     {
+        captureAtDriverBoundary(joint, mapping);
         runReadyProbe(joint);
         double target = std::clamp(
             joint.last_measured,
@@ -780,7 +1117,7 @@ void runInteractiveJog(JointRuntime &joint)
         std::cout
             << "\n进入 " << joint.config.name
             << "（node " << joint.config.motor.node_id << "）\n"
-            << "↑：正增量，↓：负增量；松开后约 150 ms 自动保持；q：退出测试\n"
+            << "↑：正增量，↓：负增量；松开后约 150 ms 自动保持；q：退出当前电机测试并返回列表\n"
             << "当前目标位置：" << target << " rad\n"
             << std::flush;
 
@@ -903,7 +1240,7 @@ void runInteractiveJog(JointRuntime &joint)
 void printMotorList(const std::vector<JointRuntime> &joints)
 {
     std::cout
-        << "\n可测试电机（左臂在前，肩部到手腕）：\n";
+        << "\n可测试电机（头部在前，然后是左臂和右臂的肩部到手腕）：\n";
     for (std::size_t index = 0; index < joints.size(); ++index)
     {
         const auto &joint = joints[index];
@@ -913,6 +1250,10 @@ void printMotorList(const std::vector<JointRuntime> &joints)
             << " / " << joint.config.physical_name
             << " / node " << joint.config.motor.node_id
             << " / current=" << joint.last_measured << " rad";
+        if (joint.driver_boundary_capture_target)
+        {
+            std::cout << " / 进入测试前先执行驱动器边界接管";
+        }
         if (!joint.skip_reason.empty())
         {
             std::cout << " / 跳过：" << joint.skip_reason;
@@ -980,7 +1321,7 @@ int main(int argc, char **argv)
         requireExclusiveController();
 
         robot::common::logger()->info(
-            "TI5 双臂电机方向标注测试：启动并拉起本体 CAN");
+            "TI5 头部与双臂电机方向标注测试：启动并拉起本体 CAN");
 
         const auto robot_config = robot::ti5::loadRobotConfig(
             configPath("robot.yaml"));
@@ -988,10 +1329,10 @@ int main(int argc, char **argv)
             configPath("can.yaml"));
         const auto safety_limits = loadSafetyLimits(
             configPath("safety.yaml"));
-        const auto ordered_joints = orderedArmJoints(robot_config);
+        const auto ordered_joints = orderedDirectionJoints(robot_config);
 
         const auto candidate_interfaces = prepareBodyCan(can_config);
-        const auto mapping = discoverArmBuses(
+        const auto mapping = discoverDirectionBuses(
             robot_config,
             can_config,
             candidate_interfaces);
@@ -1015,17 +1356,21 @@ int main(int argc, char **argv)
             options.delta_rad);
 
         std::cout
-            << "\n准备完成；程序只测试双臂 14 轴，不测试头部、腰部和折叠轴。\n"
+            << "\n准备完成；程序测试头部 3 轴和双臂 14 轴，不测试腰部和折叠轴。\n"
             << "输入编号选择电机；进入后 ↑/↓ 为正负增量，q 返回列表。\n"
             << "程序不会写零位、不会自动发送 STOP/disable。\n";
-        const auto selection = promptMotorSelection(joints);
-        if (selection)
+        while (true)
         {
+            const auto selection = promptMotorSelection(joints);
+            if (!selection)
+            {
+                break;
+            }
             robot::common::logger()->info(
                 "开始交互点动 {}（CAN node {}）",
                 joints[*selection].config.name,
                 joints[*selection].config.motor.node_id);
-            runInteractiveJog(joints[*selection]);
+            runInteractiveJog(joints[*selection], mapping);
         }
 
         robot::common::logger()->info(

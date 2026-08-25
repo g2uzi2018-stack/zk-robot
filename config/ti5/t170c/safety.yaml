@@ -81,7 +81,10 @@ position_limits:
     verified_on_robot: false
 
   left_shoulder_roll:
-    min: -1.396263402
+    # 2026-08-23 记录的自然下垂参考约为 -90.623°。
+    # 这里只扩展主机软件限位；实际 CSP 目标仍须落在驱动器 0x1A/0x1B
+    # 与本配置的交集内。
+    min: -1.581678003
     max: 1.396263402
     verified_on_robot: false
 
@@ -117,7 +120,10 @@ position_limits:
 
   right_shoulder_roll:
     min: -1.396263402
-    max: 1.396263402
+    # 2026-08-23 记录的自然下垂参考约为 +86.114°。
+    # 这里只扩展主机软件限位；实际 CSP 目标仍须落在驱动器 0x1A/0x1B
+    # 与本配置的交集内。
+    max: 1.502965614
     verified_on_robot: false
 
   right_shoulder_yaw:

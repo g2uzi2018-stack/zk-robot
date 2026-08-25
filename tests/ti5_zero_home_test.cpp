@@ -62,7 +62,6 @@ constexpr double kMaximumAutomaticTravelRad = 0.50;
 constexpr double kMaximumShoulderRollRecoveryTravelRad = 1.62;
 constexpr double kMaximumDriverBoundaryCaptureRad = 0.12;
 constexpr double kDriverBoundaryCaptureMarginRad = 0.005;
-constexpr double kRecoveryCorridorToleranceRad = 0.05;
 constexpr double kMinimumMoveSeconds = 2.0;
 constexpr int kIntermediateHoldCycles = 50;
 
@@ -74,8 +73,9 @@ const std::set<std::string> kControlledBuses{
 
 // 2026-08-23 菜单 2 完成自然下垂后，只读采样 3 秒、每轴 60 帧；
 // 所有轴 mode=0、fault=0，且每轴 60 帧完全稳定。这里保存 CAN 原始
-// 输出端 counts，不经过 kinematics.yaml。完整下垂点只作为插值参考，
-// 程序绝不以 CSP 命令完整下垂点，只命令到 q0->q_down 的第二中间点。
+// 输出端 counts，不经过 kinematics.yaml。完整下垂点只作为缓降插值参考，
+// 不作为肩横滚恢复包络；程序绝不以 CSP 命令完整下垂点，只命令到
+// q0->q_down 的第二中间点。
 const std::map<std::string, std::int32_t> kNaturalDroopCounts{
     {"left_shoulder_pitch", -3979},
     {"left_shoulder_roll", -65990},
@@ -449,23 +449,20 @@ double naturalDroopReferenceForJoint(
 
 bool isKnownShoulderRecoveryCorridor(
     const robot::ti5::PhysicalJointConfig &joint,
-    const SafetyLimit &safety,
+    const robot::ti5::DriverPositionLimits &driver_limits,
     const double position)
 {
     if (!isShoulderRoll(joint.name))
     {
         return false;
     }
-    const double natural_droop = naturalDroopReferenceForJoint(joint);
     if (joint.name == "left_shoulder_roll")
     {
-        return position < safety.minimum &&
-               position >= natural_droop -
-                               kRecoveryCorridorToleranceRad;
+        return position < driver_limits.minimum_rad &&
+               position >= -kMaximumShoulderRollRecoveryTravelRad;
     }
-    return position > safety.maximum &&
-           position <= natural_droop +
-                           kRecoveryCorridorToleranceRad;
+    return position > driver_limits.maximum_rad &&
+           position <= kMaximumShoulderRollRecoveryTravelRad;
 }
 
 std::vector<robot::ti5::PhysicalJointConfig> selectJoints(
@@ -849,13 +846,39 @@ std::vector<JointRuntime> buildCspRuntimes(
             {driver_limits->minimum_rad - *position,
              *position - driver_limits->maximum_rad,
              0.0});
-        const bool known_shoulder_recovery =
-            require_zero_reachable && outside_host_limit &&
+        const bool inside_shoulder_recovery_corridor =
+            require_zero_reachable &&
             isKnownShoulderRecoveryCorridor(
-                config, safety->second, *position) &&
-            std::abs(*position) <=
-                kMaximumShoulderRollRecoveryTravelRad &&
-            distance_outside_driver <=
+                config, *driver_limits, *position);
+        std::optional<double> shoulder_capture_target;
+        double shoulder_capture_distance = 0.0;
+        bool shoulder_capture_target_inside_host_limit = false;
+        if (inside_shoulder_recovery_corridor)
+        {
+            const double capture_lower =
+                driver_limits->minimum_rad +
+                kDriverBoundaryCaptureMarginRad;
+            const double capture_upper =
+                driver_limits->maximum_rad -
+                kDriverBoundaryCaptureMarginRad;
+            if (capture_lower >= capture_upper)
+            {
+                throw std::runtime_error(
+                    config.name +
+                    " 的驱动器目标范围过窄，无法建立边界内接管目标");
+            }
+            shoulder_capture_target = std::clamp(
+                *position, capture_lower, capture_upper);
+            shoulder_capture_distance = std::abs(
+                *shoulder_capture_target - *position);
+            shoulder_capture_target_inside_host_limit =
+                *shoulder_capture_target >= safety->second.minimum &&
+                *shoulder_capture_target <= safety->second.maximum;
+        }
+        const bool known_shoulder_recovery =
+            inside_shoulder_recovery_corridor &&
+            shoulder_capture_target_inside_host_limit &&
+            shoulder_capture_distance <=
                 kMaximumDriverBoundaryCaptureRad;
         if (outside_host_limit && !known_shoulder_recovery)
         {
@@ -865,8 +888,22 @@ std::vector<JointRuntime> buildCspRuntimes(
                     << " rad，位于 safety.yaml 之外；禁止建立 CSP HOLD";
             if (require_zero_reachable && isShoulderRoll(config.name))
             {
-                message
-                    << "。该位置不在已记录的自然下垂恢复走廊内，禁止边界接管";
+                message << "。肩横滚恢复预检失败：允许的被动下垂包络为 ±"
+                        << kMaximumShoulderRollRecoveryTravelRad << " rad";
+                if (shoulder_capture_target)
+                {
+                    message << "，最近边界内目标="
+                            << *shoulder_capture_target
+                            << " rad，实际接管距离="
+                            << shoulder_capture_distance
+                            << " rad（上限 "
+                            << kMaximumDriverBoundaryCaptureRad << " rad）";
+                    if (!shoulder_capture_target_inside_host_limit)
+                    {
+                        message << "，且接管目标位于 safety.yaml 之外";
+                    }
+                }
+                message << "；禁止边界接管";
             }
             throw std::runtime_error(message.str());
         }
@@ -887,6 +924,18 @@ std::vector<JointRuntime> buildCspRuntimes(
                     << std::fixed << std::setprecision(6)
                     << config.name << " 当前电机角=" << *position
                     << " rad，位于驱动器 0x1A/0x1B 之外；禁止建立 CSP HOLD";
+                if (require_zero_reachable && isShoulderRoll(config.name))
+                {
+                    message << "；被动下垂包络为 ±"
+                            << kMaximumShoulderRollRecoveryTravelRad << " rad";
+                    if (shoulder_capture_target)
+                    {
+                        message << "，实际边界接管距离="
+                                << shoulder_capture_distance
+                                << " rad（上限 "
+                                << kMaximumDriverBoundaryCaptureRad << " rad）";
+                    }
+                }
                 throw std::runtime_error(message.str());
             }
             robot::common::logger()->warn(
@@ -955,18 +1004,11 @@ std::vector<JointRuntime> buildCspRuntimes(
         runtime.driver_limits = *driver_limits;
         runtime.start_position = *position;
         runtime.last_commanded = *position;
-        if (known_shoulder_recovery)
+        if (known_shoulder_recovery && shoulder_capture_target &&
+            shoulder_capture_distance > 1e-6)
         {
-            const double capture_target = std::clamp(
-                *position,
-                driver_limits->minimum_rad +
-                    kDriverBoundaryCaptureMarginRad,
-                driver_limits->maximum_rad -
-                    kDriverBoundaryCaptureMarginRad);
-            if (std::abs(capture_target - *position) > 1e-6)
-            {
-                runtime.driver_boundary_capture_target = capture_target;
-            }
+            runtime.driver_boundary_capture_target =
+                *shoulder_capture_target;
         }
         runtime.feedback.last_sequence = state->update_sequence;
         runtime.feedback.measured_position = state_position;
@@ -1011,16 +1053,8 @@ LoweringPlan buildLoweringPlan(const std::vector<JointRuntime> &joints)
 
     for (const auto &joint : joints)
     {
-        const auto reference = kNaturalDroopCounts.find(joint.config.name);
-        if (reference == kNaturalDroopCounts.end())
-        {
-            throw std::runtime_error(
-                "缺少自然下垂参考值：" + joint.config.name);
-        }
         const double natural_droop =
-            robot::ti5::positionCountsToRadians(
-                reference->second,
-                joint.config.motor.encoder.counts_per_output_revolution);
+            naturalDroopReferenceForJoint(joint.config);
         const double first = joint.start_position +
                              (natural_droop - joint.start_position) / 3.0;
         const double second = joint.start_position +

@@ -94,6 +94,21 @@ std::optional<DriverPositionLimits> CanMotor::queryPositionLimits()
             encoder_.counts_per_output_revolution)};
 }
 
+std::optional<DriverStatus> CanMotor::queryDriverStatus()
+{
+    const auto run_mode = bus_.queryRunMode(
+        node_id_,
+        std::chrono::milliseconds{50});
+    const auto fault_bits = bus_.queryFaultBits(
+        node_id_,
+        std::chrono::milliseconds{50});
+    if (!run_mode || !fault_bits)
+    {
+        return std::nullopt;
+    }
+    return DriverStatus{*run_mode, *fault_bits};
+}
+
 std::optional<MotorState> CanMotor::latestState()
 {
     bus_.collectPendingFeedback();
@@ -103,6 +118,45 @@ std::optional<MotorState> CanMotor::latestState()
 std::optional<MotorState> CanMotor::latestFeedback()
 {
     return latestState();
+}
+
+std::optional<double> CanMotor::readVelocity()
+{
+    const auto state = latestState();
+    if (!state || !state->speed_raw)
+    {
+        return std::nullopt;
+    }
+    return speedRawToOutputRadiansPerSecond(
+        state->speed_raw->value,
+        encoder_.gear_ratio);
+}
+
+std::optional<double> CanMotor::readCurrentAmps()
+{
+    const auto state = latestState();
+    if (!state || !state->current_milliamps)
+    {
+        return std::nullopt;
+    }
+    return static_cast<double>(state->current_milliamps->value) / 1000.0;
+}
+
+bool CanMotor::hasFreshCspFeedback(
+    const std::chrono::milliseconds maximum_age)
+{
+    if (maximum_age.count() < 0)
+    {
+        throw std::invalid_argument(
+            "maximum CSP feedback age must not be negative");
+    }
+    const auto state = latestState();
+    if (!state || !state->last_csp_feedback_timestamp)
+    {
+        return false;
+    }
+    return std::chrono::steady_clock::now() -
+               *state->last_csp_feedback_timestamp <= maximum_age;
 }
 
 void CanMotor::commandPositionCsp(const double position_rad)

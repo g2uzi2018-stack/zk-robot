@@ -123,8 +123,8 @@ struct SafetyLimit
 
 struct DriverStatus
 {
-    std::int32_t mode{0};
-    std::int32_t fault{0};
+    std::uint32_t mode{0};
+    std::uint32_t fault{0};
 };
 
 struct FeedbackTracker
@@ -646,88 +646,44 @@ std::map<std::string, std::string> discoverBusInterfaces(
     return mapping;
 }
 
-std::int32_t decodeLittleEndianInt32(
-    const std::array<std::uint8_t, 8> &data,
-    const std::size_t offset)
-{
-    const std::uint32_t raw =
-        static_cast<std::uint32_t>(data[offset]) |
-        (static_cast<std::uint32_t>(data[offset + 1]) << 8U) |
-        (static_cast<std::uint32_t>(data[offset + 2]) << 16U) |
-        (static_cast<std::uint32_t>(data[offset + 3]) << 24U);
-    std::int32_t result{0};
-    static_assert(sizeof(result) == sizeof(raw));
-    std::memcpy(&result, &raw, sizeof(result));
-    return result;
-}
-
-std::optional<std::int32_t> queryInt32Status(
-    robot::can::SocketCan &socket,
-    const std::uint16_t node_id,
-    const std::uint8_t command,
-    const std::chrono::milliseconds timeout)
-{
-    while (socket.receive(0ms))
-    {
-    }
-
-    robot::can::CanFrame query{};
-    query.id = node_id;
-    query.data_length = 1;
-    query.data[0] = command;
-    socket.send(query);
-
-    const auto deadline = std::chrono::steady_clock::now() + timeout;
-    while (std::chrono::steady_clock::now() < deadline)
-    {
-        auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
-            deadline - std::chrono::steady_clock::now());
-        if (remaining.count() <= 0)
-        {
-            remaining = 1ms;
-        }
-        const auto frame = socket.receive(remaining);
-        if (!frame)
-        {
-            return std::nullopt;
-        }
-        if (frame->id == node_id &&
-            frame->data_length == 5 &&
-            frame->data[0] == command)
-        {
-            return decodeLittleEndianInt32(frame->data, 1);
-        }
-    }
-    return std::nullopt;
-}
-
 std::map<std::string, DriverStatus> queryDriverStatuses(
     const std::vector<robot::ti5::PhysicalJointConfig> &joints,
-    const std::map<std::string, std::string> &mapping)
+    std::map<std::string, std::unique_ptr<robot::ti5::CanBus>> &buses)
 {
     std::map<std::string, DriverStatus> result;
-    for (const auto &bus_name : kControlledBuses)
+    for (const auto &joint : joints)
     {
-        robot::can::SocketCan socket{mapping.at(bus_name)};
-        for (const auto &joint : joints)
+        const auto bus = buses.find(joint.bus);
+        if (bus == buses.end() || !bus->second)
         {
-            if (joint.bus != bus_name)
-            {
-                continue;
-            }
-            const auto mode = queryInt32Status(
-                socket, joint.motor.node_id, 0x03, 80ms);
-            const auto fault = queryInt32Status(
-                socket, joint.motor.node_id, 0x0A, 80ms);
-            if (!mode || !fault)
-            {
-                throw std::runtime_error(
-                    joint.name + " 的模式或故障查询失败");
-            }
-            result.emplace(joint.name, DriverStatus{*mode, *fault});
+            throw std::runtime_error(
+                "没有为关节创建 CAN 总线：" + joint.name);
         }
+        robot::ti5::CanMotor motor{joint.motor, *bus->second};
+        const auto status = motor.queryDriverStatus();
+        if (!status)
+        {
+            throw std::runtime_error(
+                joint.name + " 的模式或故障查询失败");
+        }
+        result.emplace(
+            joint.name,
+            DriverStatus{
+                status->run_mode,
+                status->fault_bits});
     }
     return result;
+}
+
+DriverStatus queryDriverStatus(JointRuntime &joint)
+{
+    const auto status = joint.motor->queryDriverStatus();
+    if (!status)
+    {
+        throw std::runtime_error(
+            joint.config.name + " 的模式或故障查询失败");
+    }
+    return DriverStatus{status->run_mode, status->fault_bits};
 }
 
 void sendStopToBothArms(
@@ -735,6 +691,7 @@ void sendStopToBothArms(
     std::map<std::string, std::unique_ptr<robot::ti5::CanBus>> &buses,
     const std::map<std::string, std::string> &mapping)
 {
+    static_cast<void>(mapping);
     auto arm_joints = selectArmJoints(joints);
 
     std::sort(
@@ -762,7 +719,7 @@ void sendStopToBothArms(
     }
     std::this_thread::sleep_for(250ms);
 
-    const auto statuses = queryDriverStatuses(arm_joints, mapping);
+    const auto statuses = queryDriverStatuses(arm_joints, buses);
     std::vector<std::string> failures;
     for (const auto &joint : arm_joints)
     {
@@ -1011,7 +968,7 @@ std::vector<JointRuntime> buildCspRuntimes(
             runtime.driver_boundary_capture_target =
                 *shoulder_capture_target;
         }
-        runtime.feedback.last_sequence = state->update_sequence;
+        runtime.feedback.last_sequence = state->csp_update_sequence;
         runtime.feedback.measured_position = state_position;
         joints.push_back(std::move(runtime));
     }
@@ -1144,13 +1101,13 @@ double updateFeedback(JointRuntime &joint)
     {
         ++joint.feedback.stale_cycles;
     }
-    else if (state->update_sequence <= joint.feedback.last_sequence)
+    else if (state->csp_update_sequence <= joint.feedback.last_sequence)
     {
         ++joint.feedback.stale_cycles;
     }
     else
     {
-        joint.feedback.last_sequence = state->update_sequence;
+        joint.feedback.last_sequence = state->csp_update_sequence;
         ++joint.feedback.fresh_cycles;
         joint.feedback.stale_cycles = 0;
         joint.feedback.measured_position =
@@ -1168,8 +1125,7 @@ double updateFeedback(JointRuntime &joint)
 }
 
 void captureShouldersAtDriverBoundary(
-    std::vector<JointRuntime> &joints,
-    const std::map<std::string, std::string> &mapping)
+    std::vector<JointRuntime> &joints)
 {
     for (auto &joint : joints)
     {
@@ -1277,10 +1233,7 @@ void captureShouldersAtDriverBoundary(
         }
 
         const auto final_position = joint.motor->queryPosition();
-        const std::vector<robot::ti5::PhysicalJointConfig> only_joint{
-            joint.config};
-        const auto status =
-            queryDriverStatuses(only_joint, mapping).at(joint.config.name);
+        const auto status = queryDriverStatus(joint);
         if (!final_position ||
             std::abs(*final_position - capture_target) >
                 kFinalToleranceRad ||
@@ -1302,8 +1255,7 @@ void captureShouldersAtDriverBoundary(
 }
 
 void holdLastCommandsBestEffort(
-    std::vector<JointRuntime> &joints,
-    const std::map<std::string, std::string> &mapping)
+    std::vector<JointRuntime> &joints)
 {
     robot::common::logger()->warn(
         "异常后为避免突然释放，继续发送各关节最后已下达目标 {:.2f} 秒；不发送 STOP，程序退出后仍不得假定电机已释放",
@@ -1334,11 +1286,7 @@ void holdLastCommandsBestEffort(
         try
         {
             const auto final_position = joint.motor->queryPosition();
-            const std::vector<robot::ti5::PhysicalJointConfig> only_joint{
-                joint.config};
-            const auto status =
-                queryDriverStatuses(only_joint, mapping).at(
-                    joint.config.name);
+            const auto status = queryDriverStatus(joint);
             if (final_position)
             {
                 robot::common::logger()->warn(
@@ -1674,16 +1622,32 @@ int main(int argc, char **argv)
         std::map<std::string, std::unique_ptr<robot::ti5::CanBus>> buses;
         for (const auto &bus_name : kControlledBuses)
         {
+            const auto bus_config = std::find_if(
+                robot_config.can_buses.begin(),
+                robot_config.can_buses.end(),
+                [&bus_name](const auto &candidate)
+                { return candidate.name == bus_name; });
+            if (bus_config == robot_config.can_buses.end())
+            {
+                throw std::runtime_error(
+                    std::string{"缺少逻辑 CAN 总线配置："} + bus_name);
+            }
             buses.emplace(
                 bus_name,
-                std::make_unique<robot::ti5::CanBus>(mapping.at(bus_name)));
+                std::make_unique<robot::ti5::CanBus>(
+                    mapping.at(bus_name),
+                    robot::ti5::CanBusOptions{
+                        bus_config->expected_node_ids,
+                        can_config.receive.use_can_filters,
+                        can_config.receive.receive_error_frames,
+                        can_config.control.send_failure_threshold}));
         }
 
         if (action == MenuAction::StopArms)
         {
             const auto arm_configs = selectArmJoints(selected_joints);
             const auto arm_statuses = queryDriverStatuses(
-                arm_configs, mapping);
+                arm_configs, buses);
             bool all_already_stopped = true;
             bool all_currently_holding = true;
             for (const auto &joint : arm_configs)
@@ -1759,7 +1723,7 @@ int main(int argc, char **argv)
             catch (...)
             {
                 // STOP 开始前发生异常时继续保持最后的安全目标，不要突然释放。
-                holdLastCommandsBestEffort(arm_joints, mapping);
+                holdLastCommandsBestEffort(arm_joints);
                 throw;
             }
 
@@ -1773,7 +1737,7 @@ int main(int argc, char **argv)
             return 0;
         }
 
-        const auto statuses = queryDriverStatuses(selected_joints, mapping);
+        const auto statuses = queryDriverStatuses(selected_joints, buses);
         auto joints = buildCspRuntimes(
             selected_joints,
             limits,
@@ -1813,7 +1777,7 @@ int main(int argc, char **argv)
                     "肩横滚受控恢复行程可能明显大于其他轴；这不是碰撞规划器。\n"
                     "请确认当前姿态到零点的路径、夹点和线缆均安全，物理急停可立即触达。");
 
-                captureShouldersAtDriverBoundary(joints, mapping);
+                captureShouldersAtDriverBoundary(joints);
                 verifyReadiness(joints);
                 robot::common::logger()->info(
                     "开始同步回零，目标使用 CAN 电机角，不使用 kinematics.yaml 模型偏置");
@@ -1841,7 +1805,7 @@ int main(int argc, char **argv)
         }
         catch (...)
         {
-            holdLastCommandsBestEffort(joints, mapping);
+            holdLastCommandsBestEffort(joints);
             throw;
         }
 

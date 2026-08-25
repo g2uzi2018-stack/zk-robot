@@ -268,6 +268,17 @@ namespace
         return std::chrono::milliseconds{static_cast<Rep>(value)};
     }
 
+    std::chrono::microseconds toMicroseconds(const std::uint64_t value,
+                                             const std::string &context)
+    {
+        using Rep = std::chrono::microseconds::rep;
+        if (value > static_cast<std::uint64_t>(std::numeric_limits<Rep>::max()))
+        {
+            throwConfigError(context, "数值超出 microseconds 范围");
+        }
+        return std::chrono::microseconds{static_cast<Rep>(value)};
+    }
+
     void requireSchemaVersion(const YAML::Node &root,
                               const std::string &context)
     {
@@ -624,6 +635,10 @@ namespace robot::ti5
         const auto discovery = requireMap(root, "discovery", context);
         const auto discovery_context = context + ".discovery";
         result.discovery.enabled = requireBool(discovery, "enabled", discovery_context);
+        result.discovery.cache_mapping =
+            requireBool(discovery, "cache_mapping", discovery_context);
+        result.discovery.strategy =
+            requireString(discovery, "strategy", discovery_context);
 
         const auto response_timeout_ms = requireUnsigned(discovery, "response_timeout_ms", discovery_context);
         if (response_timeout_ms == 0)
@@ -642,6 +657,8 @@ namespace robot::ti5
         result.discovery.allow_partial_bus = requireBool(discovery, "allow_partial_bus", discovery_context);
         result.discovery.require_unique_bus_match =
             requireBool(discovery, "require_unique_bus_match", discovery_context);
+        result.discovery.discover_hands =
+            requireBool(discovery, "discover_hands", discovery_context);
 
         if (result.discovery.confirmations_required == 0)
         {
@@ -656,6 +673,122 @@ namespace robot::ti5
             throwConfigError(discovery_context + ".max_attempts",
                              "必须不小于 confirmations_required (" +
                                  std::to_string(result.discovery.confirmations_required) + ")");
+        }
+
+        if (result.discovery.cache_mapping)
+        {
+            throwConfigError(discovery_context + ".cache_mapping",
+                             "当前 TI5 启动必须每次重新发现接口");
+        }
+        if (result.discovery.strategy != "expected_node_ids")
+        {
+            throwConfigError(discovery_context + ".strategy",
+                             "当前只支持 expected_node_ids");
+        }
+        if (result.discovery.discover_hands)
+        {
+            throwConfigError(discovery_context + ".discover_hands",
+                             "傲意手不能参与本体节点发现");
+        }
+
+        const auto receive = requireMap(root, "receive", context);
+        const auto receive_context = context + ".receive";
+        result.receive.centralized_receiver =
+            requireBool(receive, "centralized_receiver", receive_context);
+        result.receive.latest_feedback_cache =
+            requireBool(receive, "latest_feedback_cache", receive_context);
+        result.receive.timestamp_clock =
+            requireString(receive, "timestamp_clock", receive_context);
+        result.receive.use_can_filters =
+            requireBool(receive, "use_can_filters", receive_context);
+        result.receive.receive_error_frames =
+            requireBool(receive, "receive_error_frames", receive_context);
+        if (!result.receive.centralized_receiver ||
+            !result.receive.latest_feedback_cache ||
+            !result.receive.use_can_filters)
+        {
+            throwConfigError(receive_context,
+                             "TI5 正式总线必须统一接收、缓存最新反馈并使用节点过滤");
+        }
+        if (result.receive.timestamp_clock != "monotonic")
+        {
+            throwConfigError(receive_context + ".timestamp_clock",
+                             "必须为 monotonic");
+        }
+
+        const auto control = requireMap(root, "control", context);
+        const auto control_context = context + ".control";
+        result.control.frequency_hz = toSizeT(
+            requireUnsigned(control, "frequency_hz", control_context),
+            control_context + ".frequency_hz");
+        result.control.inter_frame_gap = toMicroseconds(
+            requireUnsigned(control, "inter_frame_gap_us", control_context),
+            control_context + ".inter_frame_gap_us");
+        result.control.post_batch_feedback_wait = toMicroseconds(
+            requireUnsigned(control,
+                            "post_batch_feedback_wait_us",
+                            control_context),
+            control_context + ".post_batch_feedback_wait_us");
+        result.control.send_failure_threshold = toSizeT(
+            requireUnsigned(control,
+                            "send_failure_threshold",
+                            control_context),
+            control_context + ".send_failure_threshold");
+        if (result.control.frequency_hz == 0 ||
+            result.control.send_failure_threshold == 0)
+        {
+            throwConfigError(control_context,
+                             "frequency_hz 和 send_failure_threshold 必须为正数");
+        }
+
+        const auto watchdog = requireMap(root, "watchdog", context);
+        const auto watchdog_context = context + ".watchdog";
+        result.watchdog.stale_feedback_cycles = toSizeT(
+            requireUnsigned(watchdog,
+                            "stale_feedback_cycles",
+                            watchdog_context),
+            watchdog_context + ".stale_feedback_cycles");
+        result.watchdog.reject_new_motion_on_stale_feedback =
+            requireBool(watchdog,
+                        "reject_new_motion_on_stale_feedback",
+                        watchdog_context);
+        result.watchdog.enter_fault_on_stale_feedback =
+            requireBool(watchdog,
+                        "enter_fault_on_stale_feedback",
+                        watchdog_context);
+        result.watchdog.enter_fault_on_bus_off =
+            requireBool(watchdog,
+                        "enter_fault_on_bus_off",
+                        watchdog_context);
+        if (result.watchdog.stale_feedback_cycles == 0)
+        {
+            throwConfigError(watchdog_context + ".stale_feedback_cycles",
+                             "必须为正数");
+        }
+        if (result.watchdog.enter_fault_on_bus_off &&
+            !result.receive.receive_error_frames)
+        {
+            throwConfigError(watchdog_context + ".enter_fault_on_bus_off",
+                             "启用总线关闭保护时必须接收 CAN 错误帧");
+        }
+
+        const auto exclusive_control =
+            requireMap(root, "exclusive_control", context);
+        const auto exclusive_context = context + ".exclusive_control";
+        result.exclusive_control.enabled =
+            requireBool(exclusive_control, "enabled", exclusive_context);
+        result.exclusive_control.lock_file =
+            requireString(exclusive_control, "lock_file", exclusive_context);
+        result.exclusive_control.reject_second_controller =
+            requireBool(exclusive_control,
+                        "reject_second_controller",
+                        exclusive_context);
+        if (result.exclusive_control.enabled &&
+            (result.exclusive_control.lock_file.empty() ||
+             !result.exclusive_control.reject_second_controller))
+        {
+            throwConfigError(exclusive_context,
+                             "启用独占控制时必须提供锁文件并拒绝第二个控制进程");
         }
         return result;
     }

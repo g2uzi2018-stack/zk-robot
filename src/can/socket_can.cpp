@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cerrno>
 #include <linux/can.h>
+#include <linux/can/error.h>
 #include <linux/can/raw.h>
 #include <net/if.h>
 #include <poll.h>
@@ -11,6 +12,7 @@
 #include <sys/socket.h>
 #include <unistd.h>
 #include <utility>
+#include <vector>
 
 namespace
 {
@@ -24,7 +26,8 @@ namespace
 namespace robot::can
 {
     // 打开并绑定指定的 SocketCAN 接口。
-    SocketCan::SocketCan(std::string interface_name)
+    SocketCan::SocketCan(std::string interface_name,
+                         SocketCanOptions options)
         : interface_name_(std::move(interface_name))
     {
         if (interface_name_.empty())
@@ -46,6 +49,57 @@ namespace robot::can
         if (socket_fd < 0)
         {
             throwSocketCanError(errno, "Create SocketCAN socket", interface_name_);
+        }
+
+        if (!options.accepted_ids.empty())
+        {
+            std::vector<can_filter> filters;
+            filters.reserve(options.accepted_ids.size());
+            for (const auto node_id : options.accepted_ids)
+            {
+                if (node_id == 0 || node_id > CAN_SFF_MASK)
+                {
+                    ::close(socket_fd);
+                    throw std::invalid_argument(
+                        "SocketCAN filter ID must be in range 1..2047");
+                }
+                filters.push_back(can_filter{
+                    static_cast<canid_t>(node_id),
+                    CAN_SFF_MASK});
+            }
+
+            if (::setsockopt(socket_fd,
+                             SOL_CAN_RAW,
+                             CAN_RAW_FILTER,
+                             filters.data(),
+                             static_cast<socklen_t>(
+                                 filters.size() * sizeof(can_filter))) < 0)
+            {
+                const int error_number = errno;
+                ::close(socket_fd);
+                throwSocketCanError(
+                    error_number,
+                    "Configure SocketCAN receive filters",
+                    interface_name_);
+            }
+        }
+
+        if (options.receive_error_frames)
+        {
+            constexpr can_err_mask_t error_mask = CAN_ERR_MASK;
+            if (::setsockopt(socket_fd,
+                             SOL_CAN_RAW,
+                             CAN_RAW_ERR_FILTER,
+                             &error_mask,
+                             sizeof(error_mask)) < 0)
+            {
+                const int error_number = errno;
+                ::close(socket_fd);
+                throwSocketCanError(
+                    error_number,
+                    "Configure SocketCAN error filter",
+                    interface_name_);
+            }
         }
 
         sockaddr_can address{};
@@ -101,8 +155,41 @@ namespace robot::can
         }
     }
 
-    // 在指定超时时间内接收一帧 CAN 数据。
-    std::optional<CanFrame> SocketCan::receive(std::chrono::milliseconds timeout)
+    std::optional<CanFrame> SocketCan::receive(
+        const std::chrono::milliseconds timeout)
+    {
+        const auto deadline = std::chrono::steady_clock::now() + timeout;
+        auto remaining = timeout;
+
+        while (true)
+        {
+            const auto event = receiveEvent(remaining);
+            if (!event)
+            {
+                return std::nullopt;
+            }
+            if (event->kind == CanReceiveEventKind::Data)
+            {
+                return event->frame;
+            }
+
+            const auto now = std::chrono::steady_clock::now();
+            if (now >= deadline)
+            {
+                return std::nullopt;
+            }
+            remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
+                deadline - now);
+            if (remaining.count() <= 0)
+            {
+                remaining = std::chrono::milliseconds{1};
+            }
+        }
+    }
+
+    // 在指定超时时间内接收一帧 CAN 数据或错误事件。
+    std::optional<CanReceiveEvent> SocketCan::receiveEvent(
+        std::chrono::milliseconds timeout)
     {
         if (timeout.count() < 0)
         {
@@ -160,8 +247,23 @@ namespace robot::can
             throwSocketCanError(EIO, "Read complete CAN frame", interface_name_);
         }
 
-        // 当前封装只接受标准数据帧，不支持扩展帧、远程帧和错误帧。
-        constexpr canid_t unsupported_flags = CAN_EFF_FLAG | CAN_RTR_FLAG | CAN_ERR_FLAG;
+        const auto timestamp = std::chrono::steady_clock::now();
+
+        if ((native_frame.can_id & CAN_ERR_FLAG) != 0)
+        {
+            CanReceiveEvent event;
+            event.kind = CanReceiveEventKind::Error;
+            event.error.error_mask = static_cast<std::uint32_t>(
+                native_frame.can_id & CAN_ERR_MASK);
+            std::copy_n(native_frame.data,
+                        event.error.data.size(),
+                        event.error.data.begin());
+            event.timestamp = timestamp;
+            return event;
+        }
+
+        // TI5 本体协议只使用标准数据帧。
+        constexpr canid_t unsupported_flags = CAN_EFF_FLAG | CAN_RTR_FLAG;
 
         if ((native_frame.can_id & unsupported_flags) != 0)
         {
@@ -178,6 +280,10 @@ namespace robot::can
         frame.id = static_cast<std::uint16_t>(native_frame.can_id & CAN_SFF_MASK);
         frame.data_length = native_frame.can_dlc;
         std::copy_n(native_frame.data, frame.data_length, frame.data.begin());
-        return frame;
+        CanReceiveEvent event;
+        event.kind = CanReceiveEventKind::Data;
+        event.frame = frame;
+        event.timestamp = timestamp;
+        return event;
     }
 }

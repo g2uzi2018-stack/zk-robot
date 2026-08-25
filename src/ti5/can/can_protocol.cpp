@@ -15,7 +15,9 @@ namespace
     constexpr std::uint8_t kMaximumCanDataLength = 8;
 
     // TI5 T170C 应用层命令码。
+    constexpr std::uint8_t kRunModeQueryCommand = 0x03;
     constexpr std::uint8_t kPositionQueryCommand = 0x08;
+    constexpr std::uint8_t kFaultQueryCommand = 0x0A;
     constexpr std::uint8_t kMaximumPositionQueryCommand = 0x1A;
     constexpr std::uint8_t kMinimumPositionQueryCommand = 0x1B;
     constexpr std::uint8_t kCspQueryCommand = 0x41;
@@ -29,9 +31,10 @@ namespace
     // 校验节点 ID 是否可以作为标准 11-bit CAN ID 使用。
     void validateNodeId(std::uint16_t node_id)
     {
-        if (!isStandardCanId(node_id))
+        if (node_id == 0 || !isStandardCanId(node_id))
         {
-            throw std::invalid_argument("node_id must be a standard 11-bit CAN ID");
+            throw std::invalid_argument(
+                "TI5 node_id must be in range 1..2047");
         }
     }
 
@@ -47,14 +50,21 @@ namespace
         data[offset + 3] = static_cast<std::uint8_t>((raw >> 24U) & 0xFFU);
     }
 
+    std::uint32_t readUint32LittleEndian(
+        const std::array<std::uint8_t, 8> &data,
+        const std::size_t offset)
+    {
+        return static_cast<std::uint32_t>(data[offset]) |
+               (static_cast<std::uint32_t>(data[offset + 1]) << 8U) |
+               (static_cast<std::uint32_t>(data[offset + 2]) << 16U) |
+               (static_cast<std::uint32_t>(data[offset + 3]) << 24U);
+    }
+
     // 按小端序读取 int32，避免依赖有符号窄化转换的实现定义行为。
     std::int32_t readInt32LittleEndian(const std::array<std::uint8_t, 8> &data,
                                        std::size_t offset)
     {
-        const auto raw = static_cast<std::uint32_t>(data[offset]) |
-                         (static_cast<std::uint32_t>(data[offset + 1]) << 8U) |
-                         (static_cast<std::uint32_t>(data[offset + 2]) << 16U) |
-                         (static_cast<std::uint32_t>(data[offset + 3]) << 24U);
+        const auto raw = readUint32LittleEndian(data, offset);
 
         if (raw <= static_cast<std::uint32_t>(std::numeric_limits<std::int32_t>::max()))
         {
@@ -96,6 +106,14 @@ namespace
                    : kMinimumPositionQueryCommand;
     }
 
+    std::uint8_t driverStatusCommand(
+        const robot::ti5::DriverStatusField field) noexcept
+    {
+        return field == robot::ti5::DriverStatusField::RunMode
+                   ? kRunModeQueryCommand
+                   : kFaultQueryCommand;
+    }
+
     bool isPositionLimitQueryResponseFormat(
         const robot::can::CanFrame &frame,
         const robot::ti5::PositionLimitKind kind) noexcept
@@ -103,6 +121,15 @@ namespace
         return isStandardCanId(frame.id) &&
                frame.data_length == 5 &&
                frame.data[0] == positionLimitCommand(kind);
+    }
+
+    bool isDriverStatusQueryResponseFormat(
+        const robot::can::CanFrame &frame,
+        const robot::ti5::DriverStatusField field) noexcept
+    {
+        return isStandardCanId(frame.id) &&
+               frame.data_length == 5 &&
+               frame.data[0] == driverStatusCommand(field);
     }
 
     void validatePositionQueryResponse(const robot::can::CanFrame &frame)
@@ -190,6 +217,45 @@ namespace robot::ti5
                 "Invalid TI5 position-limit response frame");
         }
         return readInt32LittleEndian(frame.data, 1);
+    }
+
+    robot::can::CanFrame encodeDriverStatusQuery(
+        const std::uint16_t node_id,
+        const DriverStatusField field)
+    {
+        validateNodeId(node_id);
+
+        robot::can::CanFrame frame{};
+        frame.id = node_id;
+        frame.data_length = 1;
+        frame.data[0] = driverStatusCommand(field);
+        return frame;
+    }
+
+    bool isDriverStatusQueryResponse(
+        const robot::can::CanFrame &frame,
+        const std::uint16_t expected_node_id,
+        const DriverStatusField field) noexcept
+    {
+        return isStandardCanId(expected_node_id) &&
+               isDriverStatusQueryResponseFormat(frame, field) &&
+               frame.id == expected_node_id;
+    }
+
+    DriverStatusFeedback decodeDriverStatusFeedback(
+        const robot::can::CanFrame &frame,
+        const DriverStatusField field)
+    {
+        if (!isDriverStatusQueryResponseFormat(frame, field))
+        {
+            throw std::invalid_argument(
+                "Invalid TI5 driver-status response frame");
+        }
+
+        return DriverStatusFeedback{
+            frame.id,
+            field,
+            readUint32LittleEndian(frame.data, 1)};
     }
 
     // 编码 0x41 CSP 查询请求帧。

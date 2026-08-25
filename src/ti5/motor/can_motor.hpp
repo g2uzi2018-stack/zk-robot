@@ -3,6 +3,7 @@
 #include "ti5/can/can_bus.hpp"
 #include "ti5/config/config.hpp"
 
+#include <chrono>
 #include <cstdint>
 #include <optional>
 
@@ -15,6 +16,12 @@ struct DriverPositionLimits
     std::int32_t maximum_counts{0};
     double minimum_rad{0.0};
     double maximum_rad{0.0};
+};
+
+struct DriverStatus
+{
+    std::uint32_t run_mode{0};
+    std::uint32_t fault_bits{0};
 };
 
 // 一个实际 T170C 物理电机的薄运行时封装。
@@ -30,8 +37,14 @@ public:
     std::optional<double> readPosition();
     std::optional<CspFeedback> queryCspStatus();
     std::optional<DriverPositionLimits> queryPositionLimits();
+    std::optional<DriverStatus> queryDriverStatus();
     std::optional<MotorState> latestState();
     std::optional<MotorState> latestFeedback();
+    std::optional<double> readVelocity();
+    std::optional<double> readCurrentAmps();
+
+    // 只检查最近一次真正的 CSP 反馈，不会把 0x08 位置查询误当成 CSP 更新。
+    bool hasFreshCspFeedback(std::chrono::milliseconds maximum_age);
 
     // 只编码并发送 0x44 Position CSP。调用者必须先完成独占控制、
     // 当前位置、软限位、驱动器目标范围和反馈新鲜度检查。

@@ -1,42 +1,61 @@
 # ZK Robot
 
-TIAGo 机器人 SocketCAN 驱动实验工程。当前实现从 YAML 加载 CAN 总线与关节参数，完成协议帧处理、编码器/关节单位换算，并向单个电机发送使能和位置指令。
+机器人 C++/SocketCAN 控制工程。仓库保留现有 TIAGo 实现，并按照相同的分层方式逐步
+接入 TI5 T170C。
 
-## 当前能力
+## 代码分层
 
-- SocketCAN 接口的打开、收发与错误处理。
-- YAML 格式的多总线、关节、限位和编码器配置。
-- CAN 协议编解码与编码器位置换算。
-- 电机使能及带速度上限的位置命令。
-- TIAGo 八路总线配置样例，详见 [`config/tiago/can/README.md`](config/tiago/can/README.md)。
+```text
+src/can/             与机器人型号无关的 Linux SocketCAN 公共层
+src/tiago/           现有 TIAGo 分层实现
+src/ti5/config/      TI5 拓扑和 CAN 配置读取
+src/ti5/can/         TI5 协议、节点发现、总线反馈和总线健康状态
+src/ti5/motor/       TI5 单个实体电机
+src/ti5/hand/        傲意灵巧手独立协议
+tools/               需要明确操作、可能连接实体机器人的调试工具
+tests/               不连接实体机器人的自动测试
+```
 
-## 构建
+后续 TI5 的 `joint/arm/head/controller/executor` 将参考 `src/tiago/` 的现有层级继续
+向上增加。关节方向、模型零偏、软限位和多关节协调不属于 `CanMotor`。
 
-需要支持 SocketCAN 的 Linux、CMake 3.16+、C++17 编译器和 `yaml-cpp`：
+## TI5 Motor 阶段能力
+
+- 识别本体四通道 USB-CAN 适配器，并将逻辑总线映射到实际 `canX`。
+- 使用 `0x08` 只读发现节点并读取当前位置。
+- 读取驱动器 `0x1A/0x1B` 目标位置范围。
+- 使用 `0x41/0x44` 查询和发送 Position CSP，解析位置、速度和电流反馈。
+- 查询 `0x03` 运行模式和 `0x0A` 原始故障位。
+- 区分普通位置查询和真正 CSP 反馈的新鲜度序号。
+- 使用 SocketCAN 节点过滤，并记录错误警告、错误被动、总线关闭和自动恢复事件。
+- 记录发送失败次数；CAN 层只报告健康状态，不会自动恢复机器人运动。
+
+当前 Motor 层只开放已确认的双编码器 Position CSP，不实现猜测性的 `0x01` 使能、
+PT、电流/速度控制、参数写入、抱闸或零位写入。
+
+## 构建与自动测试
 
 ```bash
-cmake -S . -B build
+cmake -S . -B build -DBUILD_TESTING=ON
 cmake --build build -j"$(nproc)"
+ctest --test-dir build --output-on-failure
 ```
 
-运行入口为：
+这些自动测试使用内存中的模拟 CAN 传输，不打开实体 CAN 接口。
+
+## 实机调试工具
+
+两个工具不参与默认构建，必须显式编译：
 
 ```bash
-./build/robot
+cmake --build build --target ti5_zero_home ti5_direction_test -j2
+./build/tools/ti5_zero_home --dry-run
+./build/tools/ti5_direction_test --help
 ```
 
-## 配置与测试
+- `ti5_zero_home`：头部和双臂回零、保持或受控停止菜单。
+- `ti5_direction_test`：头部和双臂逐轴小幅方向确认。
 
-`main.cpp` 当前读取 `config/tiago/can/left_shoulder.yaml`，选择其中第一个关节并发送 `0.1 rad`、速度上限 `0.1 rad/s` 的位置命令。仓库样例默认使用 `vcan0` 至 `vcan7`；可先创建虚拟 CAN 接口验证配置和报文链路。
-
-```bash
-sudo modprobe vcan
-sudo ip link add dev vcan0 type vcan
-sudo ip link set up vcan0
-```
-
-## 安全边界
-
-当前入口会在启动后直接发送电机使能和位置命令，不应在未核对节点 ID、编码器方向、零位、关节限位和急停状态时连接物理 CAN。虚拟总线只能验证软件链路，不能替代真实驱动器的限位、故障和掉线测试。
-
-该工程仍是驱动实验基线，尚未提供完整的多关节调度、反馈闭环、故障恢复和自动化测试套件。
+实机操作方法和安全约束见 `doc/TI5_T170C_一键回零测试.md`、
+`doc/ti5_motor_direction_record.md`。腰部和折叠机构的抱闸、停止及掉线行为尚未完成验证，
+不属于当前 Motor 阶段的运动范围。

@@ -83,11 +83,46 @@ using T170cRobotConfig = Ti5RobotConfig;
 struct CanDiscoveryConfig
 {
     bool enabled{false};
+    bool cache_mapping{false};
+    std::string strategy;
     std::chrono::milliseconds response_timeout{0};
     std::size_t confirmations_required{0};
     std::size_t max_attempts{0};
     bool allow_partial_bus{false};
     bool require_unique_bus_match{false};
+    bool discover_hands{false};
+};
+
+struct CanReceiveConfig
+{
+    bool centralized_receiver{false};
+    bool latest_feedback_cache{false};
+    std::string timestamp_clock;
+    bool use_can_filters{false};
+    bool receive_error_frames{false};
+};
+
+struct CanControlConfig
+{
+    std::size_t frequency_hz{0};
+    std::chrono::microseconds inter_frame_gap{0};
+    std::chrono::microseconds post_batch_feedback_wait{0};
+    std::size_t send_failure_threshold{0};
+};
+
+struct CanWatchdogConfig
+{
+    std::size_t stale_feedback_cycles{0};
+    bool reject_new_motion_on_stale_feedback{false};
+    bool enter_fault_on_stale_feedback{false};
+    bool enter_fault_on_bus_off{false};
+};
+
+struct ExclusiveControlConfig
+{
+    bool enabled{false};
+    std::string lock_file;
+    bool reject_second_controller{false};
 };
 
 // 只描述“哪一块物理 USB-CAN 适配器属于本体”，不描述 waist/head/arm 对应哪个 canX。
@@ -116,6 +151,10 @@ struct CanConfig
 {
     SocketCanConfig socketcan;
     CanDiscoveryConfig discovery;
+    CanReceiveConfig receive;
+    CanControlConfig control;
+    CanWatchdogConfig watchdog;
+    ExclusiveControlConfig exclusive_control;
 };
 
 } // namespace robot::ti5

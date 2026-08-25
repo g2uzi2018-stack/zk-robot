@@ -272,7 +272,22 @@ for (const auto &interface : body_interfaces)
             joint->motor.node_id,
             *right_arm_bus->interface_name);
 
-        ti5::CanBus bus{*right_arm_bus->interface_name};
+        const auto right_arm_bus_config = std::find_if(
+            robot_config.can_buses.begin(),
+            robot_config.can_buses.end(),
+            [](const auto &candidate)
+            { return candidate.name == "right_arm"; });
+        if (right_arm_bus_config == robot_config.can_buses.end())
+        {
+            throw std::runtime_error("right_arm logical bus config not found");
+        }
+        ti5::CanBus bus{
+            *right_arm_bus->interface_name,
+            ti5::CanBusOptions{
+                right_arm_bus_config->expected_node_ids,
+                can_config.receive.use_can_filters,
+                can_config.receive.receive_error_frames,
+                can_config.control.send_failure_threshold}};
         ti5::CanMotor motor{joint->motor, bus};
 
         const auto queried_position = motor.queryPosition();
@@ -315,7 +330,7 @@ for (const auto &interface : body_interfaces)
         {
             throw std::runtime_error("No initial MotorState");
         }
-        std::uint64_t last_sequence = state->update_sequence;
+        std::uint64_t last_sequence = state->csp_update_sequence;
 
         // 只用当前位置探测 0x44 readiness；没有稳定回传就不真正移动。
         auto next_cycle = std::chrono::steady_clock::now();
@@ -329,9 +344,9 @@ for (const auto &interface : body_interfaces)
 
             state = motor.latestState();
             if (state && state->position_counts &&
-                state->update_sequence > last_sequence)
+                state->csp_update_sequence > last_sequence)
             {
-                last_sequence = state->update_sequence;
+                last_sequence = state->csp_update_sequence;
                 ++fresh_ready_feedback;
                 stale_cycles = 0;
             }
@@ -372,13 +387,13 @@ for (const auto &interface : body_interfaces)
 
                 state = motor.latestState();
                 if (!state || !state->position_counts ||
-                    state->update_sequence <= last_sequence)
+                    state->csp_update_sequence <= last_sequence)
                 {
                     ++local_stale_cycles;
                 }
                 else
                 {
-                    last_sequence = state->update_sequence;
+                    last_sequence = state->csp_update_sequence;
                     local_stale_cycles = 0;
                 }
 
@@ -408,7 +423,7 @@ for (const auto &interface : body_interfaces)
                             cycles,
                             target,
                             measured,
-                            state->update_sequence);
+                            state->csp_update_sequence);
                     }
                 }
             }

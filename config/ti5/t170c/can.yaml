@@ -61,8 +61,9 @@ receive:
   # 只接收当前逻辑总线允许的 node ID。
   use_can_filters: true
 
-  # SocketCAN 错误帧支持后续在公共 CAN 层补齐后启用。
-  receive_error_frames: false
+  # 接收 Linux SocketCAN 错误帧，用于识别错误警告、错误被动、
+  # 总线关闭和自动恢复；CAN 层只报告状态，不自动恢复运动。
+  receive_error_frames: true
 
 control:
   # 第一阶段采用已有工程验证过的保守参考值，后续可通过实机性能测试调整。

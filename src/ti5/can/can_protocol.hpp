@@ -12,6 +12,19 @@ namespace robot::ti5
         Minimum
     };
 
+    enum class DriverStatusField
+    {
+        RunMode,
+        FaultBits
+    };
+
+    struct DriverStatusFeedback
+    {
+        std::uint16_t node_id{0};
+        DriverStatusField field{DriverStatusField::RunMode};
+        std::uint32_t value{0};
+    };
+
     // 0x08 当前位置查询响应的协议层表示。
     //
     // 这是 CAN 帧解码后的原始反馈，不包含运行时聚合状态。
@@ -60,6 +73,18 @@ namespace robot::ti5
     std::int32_t decodePositionLimitCounts(
         const robot::can::CanFrame &frame,
         PositionLimitKind kind);
+
+    // 编码并解析 0x03 运行模式和 0x0A 故障位查询。
+    robot::can::CanFrame encodeDriverStatusQuery(
+        std::uint16_t node_id,
+        DriverStatusField field);
+    bool isDriverStatusQueryResponse(
+        const robot::can::CanFrame &frame,
+        std::uint16_t expected_node_id,
+        DriverStatusField field) noexcept;
+    DriverStatusFeedback decodeDriverStatusFeedback(
+        const robot::can::CanFrame &frame,
+        DriverStatusField field);
 
     // 编码 0x41 CSP 查询请求帧。
     robot::can::CanFrame encodeCspQuery(std::uint16_t node_id);

@@ -33,5 +33,5 @@
 ```shell
 cd /home/kuang/workspace/zk_robot
 sudo env ZK_ROBOT_CONFIRM_DIRECTION_TEST=YES \
-  ./build/ti5_direction_test --delta-rad 0.001
+  ./build/tools/ti5_direction_test --delta-rad 0.001
 ```

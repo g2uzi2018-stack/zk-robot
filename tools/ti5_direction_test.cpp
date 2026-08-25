@@ -495,87 +495,22 @@ struct JointRuntime
 
 struct DriverStatus
 {
-    std::int32_t mode{0};
-    std::int32_t fault{0};
+    std::uint32_t mode{0};
+    std::uint32_t fault{0};
 };
-
-std::int32_t decodeLittleEndianInt32(
-    const std::array<std::uint8_t, 8> &data,
-    const std::size_t offset)
-{
-    const std::uint32_t raw =
-        static_cast<std::uint32_t>(data[offset]) |
-        (static_cast<std::uint32_t>(data[offset + 1]) << 8U) |
-        (static_cast<std::uint32_t>(data[offset + 2]) << 16U) |
-        (static_cast<std::uint32_t>(data[offset + 3]) << 24U);
-    std::int32_t result{0};
-    static_assert(sizeof(result) == sizeof(raw));
-    std::memcpy(&result, &raw, sizeof(result));
-    return result;
-}
-
-std::optional<std::int32_t> queryInt32Status(
-    robot::can::SocketCan &socket,
-    const std::uint16_t node_id,
-    const std::uint8_t command,
-    const std::chrono::milliseconds timeout)
-{
-    while (socket.receive(0ms))
-    {
-    }
-
-    robot::can::CanFrame query{};
-    query.id = node_id;
-    query.data_length = 1;
-    query.data[0] = command;
-    socket.send(query);
-
-    const auto deadline = std::chrono::steady_clock::now() + timeout;
-    while (std::chrono::steady_clock::now() < deadline)
-    {
-        auto remaining = std::chrono::duration_cast<
-            std::chrono::milliseconds>(
-            deadline - std::chrono::steady_clock::now());
-        if (remaining.count() <= 0)
-        {
-            remaining = 1ms;
-        }
-        const auto frame = socket.receive(remaining);
-        if (!frame)
-        {
-            return std::nullopt;
-        }
-        if (frame->id == node_id &&
-            frame->data_length == 5 &&
-            frame->data[0] == command)
-        {
-            return decodeLittleEndianInt32(frame->data, 1);
-        }
-    }
-    return std::nullopt;
-}
 
 DriverStatus queryDriverStatus(
     const JointRuntime &joint,
     const std::map<std::string, std::string> &mapping)
 {
-    robot::can::SocketCan socket{mapping.at(joint.config.bus)};
-    const auto mode = queryInt32Status(
-        socket,
-        joint.config.motor.node_id,
-        0x03,
-        80ms);
-    const auto fault = queryInt32Status(
-        socket,
-        joint.config.motor.node_id,
-        0x0A,
-        80ms);
-    if (!mode || !fault)
+    static_cast<void>(mapping);
+    const auto status = joint.motor->queryDriverStatus();
+    if (!status)
     {
         throw std::runtime_error(
             joint.config.name + " 的模式或故障查询失败");
     }
-    return DriverStatus{*mode, *fault};
+    return DriverStatus{status->run_mode, status->fault_bits};
 }
 
 bool isShoulderRoll(const std::string &joint_name)
@@ -665,7 +600,7 @@ std::vector<JointRuntime> buildRuntimes(
         runtime.motor = std::move(motor);
         runtime.start_position = q0;
         runtime.last_measured = q0;
-        runtime.last_sequence = state->update_sequence;
+        runtime.last_sequence = state->csp_update_sequence;
         runtime.lower_limit = std::max(
             runtime.safety.minimum,
             runtime.driver_limits.minimum_rad);
@@ -818,7 +753,7 @@ void captureAtDriverBoundary(
 
         const auto state = joint.motor->latestState();
         if (!state || !state->position_counts ||
-            state->update_sequence <= joint.last_sequence)
+            state->csp_update_sequence <= joint.last_sequence)
         {
             ++stale_cycles;
             if (stale_cycles >= kMaximumStaleCycles)
@@ -834,8 +769,8 @@ void captureAtDriverBoundary(
         const auto feedback_time = std::chrono::steady_clock::now();
         const auto previous_sequence = joint.last_sequence;
         const auto sequence_gap =
-            state->update_sequence - previous_sequence;
-        joint.last_sequence = state->update_sequence;
+            state->csp_update_sequence - previous_sequence;
+        joint.last_sequence = state->csp_update_sequence;
         joint.last_measured = robot::ti5::positionCountsToRadians(
             state->position_counts->value,
             joint.config.motor.encoder.counts_per_output_revolution);
@@ -907,9 +842,9 @@ void captureAtDriverBoundary(
     joint.driver_boundary_capture_target.reset();
 
     if (const auto final_state = joint.motor->latestState();
-        final_state && final_state->update_sequence > joint.last_sequence)
+        final_state && final_state->csp_update_sequence > joint.last_sequence)
     {
-        joint.last_sequence = final_state->update_sequence;
+        joint.last_sequence = final_state->csp_update_sequence;
     }
 
     robot::common::logger()->info(
@@ -940,9 +875,9 @@ void runReadyProbe(JointRuntime &joint)
 
         const auto state = joint.motor->latestState();
         if (state && state->position_counts &&
-            state->update_sequence > joint.last_sequence)
+            state->csp_update_sequence > joint.last_sequence)
         {
-            joint.last_sequence = state->update_sequence;
+            joint.last_sequence = state->csp_update_sequence;
             joint.last_measured = robot::ti5::positionCountsToRadians(
                 state->position_counts->value,
                 joint.config.motor.encoder.counts_per_output_revolution);
@@ -1219,13 +1154,13 @@ void runInteractiveJog(
 
             const auto state = joint.motor->latestState();
             if (!state || !state->position_counts ||
-                state->update_sequence <= joint.last_sequence)
+                state->csp_update_sequence <= joint.last_sequence)
             {
                 ++stale_cycles;
             }
             else
             {
-                joint.last_sequence = state->update_sequence;
+                joint.last_sequence = state->csp_update_sequence;
                 joint.last_measured = robot::ti5::positionCountsToRadians(
                     state->position_counts->value,
                     joint.config.motor.encoder.counts_per_output_revolution);
@@ -1424,13 +1359,29 @@ int main(int argc, char **argv)
         std::map<std::string, std::unique_ptr<robot::ti5::CanBus>> buses;
         for (const auto &[bus_name, interface_name] : mapping)
         {
+            const auto bus_config = std::find_if(
+                robot_config.can_buses.begin(),
+                robot_config.can_buses.end(),
+                [&bus_name](const auto &candidate)
+                { return candidate.name == bus_name; });
+            if (bus_config == robot_config.can_buses.end())
+            {
+                throw std::runtime_error(
+                    "缺少逻辑 CAN 总线配置：" + bus_name);
+            }
             robot::common::logger()->info(
                 "方向测试总线映射：{} -> {}",
                 bus_name,
                 interface_name);
             buses.emplace(
                 bus_name,
-                std::make_unique<robot::ti5::CanBus>(interface_name));
+                std::make_unique<robot::ti5::CanBus>(
+                    interface_name,
+                    robot::ti5::CanBusOptions{
+                        bus_config->expected_node_ids,
+                        can_config.receive.use_can_filters,
+                        can_config.receive.receive_error_frames,
+                        can_config.control.send_failure_threshold}));
         }
 
         auto joints = buildRuntimes(

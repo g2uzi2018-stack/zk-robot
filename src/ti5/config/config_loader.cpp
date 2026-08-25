@@ -583,6 +583,151 @@ namespace robot::ti5
         return result;
     }
 
+    JointSafetyConfig loadJointSafetyConfig(
+        const std::filesystem::path &config_path)
+    {
+        const auto root = loadYamlFile(config_path);
+        const auto context = config_path.string();
+        if (!root || !root.IsMap())
+        {
+            throwConfigError(context, "根节点必须是 YAML mapping");
+        }
+        requireSchemaVersion(root, context);
+
+        const auto limits = requireMap(root, "position_limits", context);
+        JointSafetyConfig result;
+        for (const auto &entry : limits)
+        {
+            std::string name;
+            try
+            {
+                name = entry.first.as<std::string>();
+            }
+            catch (const YAML::Exception &error)
+            {
+                throwConfigError(
+                    context + ".position_limits",
+                    "关节名称必须是字符串: " + std::string(error.what()));
+            }
+            if (name.empty() || !entry.second.IsMap())
+            {
+                throwConfigError(
+                    context + ".position_limits",
+                    "关节名称不能为空且限位值必须是 YAML mapping");
+            }
+            const auto limit_context =
+                context + ".position_limits." + name;
+            JointPositionLimits limit;
+            limit.minimum_rad = requireDouble(
+                entry.second, "min", limit_context);
+            limit.maximum_rad = requireDouble(
+                entry.second, "max", limit_context);
+            limit.verified_on_robot = requireBool(
+                entry.second, "verified_on_robot", limit_context);
+            if (limit.minimum_rad >= limit.maximum_rad)
+            {
+                throwConfigError(
+                    limit_context, "必须满足 min < max");
+            }
+            if (!result.position_limits.emplace(name, limit).second)
+            {
+                throwConfigError(limit_context, "关节名称重复");
+            }
+        }
+        if (result.position_limits.empty())
+        {
+            throwConfigError(
+                context + ".position_limits", "至少需要一个关节限位");
+        }
+        return result;
+    }
+
+    KinematicsConfig loadKinematicsConfig(
+        const std::filesystem::path &config_path)
+    {
+        const auto root = loadYamlFile(config_path);
+        const auto context = config_path.string();
+        if (!root || !root.IsMap())
+        {
+            throwConfigError(context, "根节点必须是 YAML mapping");
+        }
+        requireSchemaVersion(root, context);
+
+        const auto models = requireMap(root, "models", context);
+        KinematicsConfig result;
+        for (const auto &model_entry : models)
+        {
+            std::string model_name;
+            try
+            {
+                model_name = model_entry.first.as<std::string>();
+            }
+            catch (const YAML::Exception &error)
+            {
+                throwConfigError(
+                    context + ".models",
+                    "模型名称必须是字符串: " + std::string(error.what()));
+            }
+            if (model_name.empty() || !model_entry.second.IsMap())
+            {
+                throwConfigError(
+                    context + ".models",
+                    "模型名称不能为空且模型值必须是 YAML mapping");
+            }
+            const auto model_context = context + ".models." + model_name;
+            const auto joints = requireSequence(
+                model_entry.second, "joints", model_context);
+            KinematicsModelConfig model;
+            for (std::size_t index = 0; index < joints.size(); ++index)
+            {
+                const auto joint_context = model_context + ".joints[" +
+                                           std::to_string(index) + "]";
+                if (!joints[index].IsMap())
+                {
+                    throwConfigError(
+                        joint_context, "类型错误，期望 YAML mapping");
+                }
+                const auto name = requireString(
+                    joints[index], "name", joint_context);
+                if (name.empty())
+                {
+                    throwConfigError(
+                        joint_context + ".name", "不能为空");
+                }
+                JointCoordinateTransform transform;
+                transform.direction = requireDouble(
+                    joints[index], "direct", joint_context);
+                transform.offset_rad = requireDouble(
+                    joints[index], "offset_rad", joint_context);
+                if (transform.direction != 1.0 &&
+                    transform.direction != -1.0)
+                {
+                    throwConfigError(
+                        joint_context + ".direct", "只允许 +1 或 -1");
+                }
+                if (!model.joints.emplace(name, transform).second)
+                {
+                    throwConfigError(
+                        joint_context + ".name", "同一模型内关节名称重复");
+                }
+            }
+            if (model.joints.empty())
+            {
+                throwConfigError(
+                    model_context + ".joints", "至少需要一个关节映射");
+            }
+            if (!result.models.emplace(model_name, std::move(model)).second)
+            {
+                throwConfigError(model_context, "模型名称重复");
+            }
+        }
+        if (result.models.empty())
+        {
+            throwConfigError(context + ".models", "至少需要一个运动学模型");
+        }
+        return result;
+    }
+
     CanConfig loadCanConfig(const std::filesystem::path &config_path)
     {
         const auto root = loadYamlFile(config_path);

@@ -18,7 +18,7 @@ add_executable(ti5_direction_test EXCLUDE_FROM_ALL
 )
 
 target_link_libraries(ti5_direction_test PRIVATE
-    ti5_motor
+    ti5_joint
     spdlog::spdlog
     fmt::fmt
 )

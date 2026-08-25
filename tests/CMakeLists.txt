@@ -18,6 +18,16 @@ target_link_libraries(ti5_can_motor_test PRIVATE
 
 add_test(NAME ti5_can_motor COMMAND ti5_can_motor_test)
 
+add_executable(ti5_joint_test
+    ti5_joint_test.cpp
+)
+
+target_link_libraries(ti5_joint_test PRIVATE
+    ti5_joint
+)
+
+add_test(NAME ti5_joint COMMAND ti5_joint_test)
+
 add_executable(ti5_config_test
     ti5_config_test.cpp
 )

@@ -3,6 +3,7 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -75,6 +76,37 @@ struct Ti5RobotConfig
     std::vector<LogicalCanBus> can_buses;
     EncoderConfig encoder_defaults;
     std::vector<PhysicalJointConfig> joints;
+};
+
+// 主机软件允许的电机输出角范围。范围来自 safety.yaml，单位为 rad。
+struct JointPositionLimits
+{
+    double minimum_rad{0.0};
+    double maximum_rad{0.0};
+    bool verified_on_robot{false};
+};
+
+// 关节模型坐标和电机输出坐标之间的安装换算：
+// motor_rad = joint_rad * direction + offset_rad。
+struct JointCoordinateTransform
+{
+    double direction{1.0};
+    double offset_rad{0.0};
+};
+
+struct JointSafetyConfig
+{
+    std::map<std::string, JointPositionLimits> position_limits;
+};
+
+struct KinematicsModelConfig
+{
+    std::map<std::string, JointCoordinateTransform> joints;
+};
+
+struct KinematicsConfig
+{
+    std::map<std::string, KinematicsModelConfig> models;
 };
 
 using LogicalCanBusConfig = LogicalCanBus;

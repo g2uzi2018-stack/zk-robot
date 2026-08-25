@@ -40,7 +40,19 @@ target_link_libraries(ti5_motor PUBLIC
     ti5_can
 )
 
-target_link_libraries(robot PRIVATE
+add_library(ti5_joint STATIC
+    joint/joint.cpp
+)
+
+target_include_directories(ti5_joint PUBLIC
+    ${CMAKE_SOURCE_DIR}/src
+)
+
+target_link_libraries(ti5_joint PUBLIC
     ti5_motor
+)
+
+target_link_libraries(robot PRIVATE
+    ti5_joint
     ti5_config
 )

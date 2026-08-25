@@ -11,13 +11,14 @@ src/tiago/           现有 TIAGo 分层实现
 src/ti5/config/      TI5 拓扑和 CAN 配置读取
 src/ti5/can/         TI5 协议、节点发现、总线反馈和总线健康状态
 src/ti5/motor/       TI5 单个实体电机
+src/ti5/joint/       TI5 单个物理关节、坐标换算和目标限位
 src/ti5/hand/        傲意灵巧手独立协议
 tools/               需要明确操作、可能连接实体机器人的调试工具
 tests/               不连接实体机器人的自动测试
 ```
 
-后续 TI5 的 `joint/arm/head/controller/executor` 将参考 `src/tiago/` 的现有层级继续
-向上增加。关节方向、模型零偏、软限位和多关节协调不属于 `CanMotor`。
+后续 TI5 的 `arm/head/controller/executor` 将参考 `src/tiago/` 的现有层级继续
+向上增加。多关节同步、控制周期和轨迹插值不属于 `Joint` 或 `CanMotor`。
 
 ## TI5 Motor 阶段能力
 
@@ -32,6 +33,18 @@ tests/               不连接实体机器人的自动测试
 
 当前 Motor 层只开放已确认的双编码器 Position CSP，不实现猜测性的 `0x01` 使能、
 PT、电流/速度控制、参数写入、抱闸或零位写入。
+
+## TI5 Joint 阶段能力
+
+- 一个 `Joint` 只拥有一个 `CanMotor`，继续共享所属逻辑总线的 `CanBus`。
+- 按 `motor_rad = joint_rad * direction + offset_rad` 转换模型关节角和电机输出角。
+- 统一加载 `safety.yaml` 的主机软件位置限位，以及 `kinematics.yaml` 的方向和零偏。
+- 下发 Position CSP 前同时检查主机软件限位和驱动器 `0x1A/0x1B` 目标范围。
+- 驱动器目标范围未成功读取时拒绝发送运动目标。
+- 将位置和速度反馈转换为关节坐标；电流、运行模式、故障和反馈新鲜度继续来自 Motor。
+
+Joint 不会把当前位置越出驱动器目标范围直接当成无效反馈，也不会自动执行肩横滚边界
+恢复。自然下垂接管、边界恢复轨迹和失败后的多关节处理属于后续启动控制。
 
 ## 构建与自动测试
 

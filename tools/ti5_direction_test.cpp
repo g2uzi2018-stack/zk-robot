@@ -6,9 +6,7 @@
 #include "ti5/can/can_discovery.hpp"
 #include "ti5/can/encoder_conversion.hpp"
 #include "ti5/config/config_loader.hpp"
-#include "ti5/motor/can_motor.hpp"
-
-#include <yaml-cpp/yaml.h>
+#include "ti5/joint/joint.hpp"
 
 #include <algorithm>
 #include <array>
@@ -287,41 +285,12 @@ std::filesystem::path configPath(const char *name)
     return root / "config" / "ti5" / "t170c" / name;
 }
 
-struct SafetyLimit
-{
-    double minimum{0.0};
-    double maximum{0.0};
-};
+using SafetyLimit = robot::ti5::JointPositionLimits;
 
 std::map<std::string, SafetyLimit> loadSafetyLimits(
     const std::filesystem::path &path)
 {
-    const YAML::Node root = YAML::LoadFile(path.string());
-    const YAML::Node limits = root["position_limits"];
-    if (!limits || !limits.IsMap())
-    {
-        throw std::runtime_error(
-            "safety.yaml 缺少 position_limits");
-    }
-
-    std::map<std::string, SafetyLimit> result;
-    for (const auto &entry : limits)
-    {
-        const auto name = entry.first.as<std::string>();
-        const auto value = entry.second;
-        const SafetyLimit limit{
-            value["min"].as<double>(),
-            value["max"].as<double>(),
-        };
-        if (!std::isfinite(limit.minimum) ||
-            !std::isfinite(limit.maximum) ||
-            limit.minimum >= limit.maximum)
-        {
-            throw std::runtime_error("无效的软件限位：" + name);
-        }
-        result.emplace(name, limit);
-    }
-    return result;
+    return robot::ti5::loadJointSafetyConfig(path).position_limits;
 }
 
 std::vector<robot::ti5::PhysicalJointConfig> orderedDirectionJoints(
@@ -481,7 +450,7 @@ struct JointRuntime
     robot::ti5::PhysicalJointConfig config;
     SafetyLimit safety;
     robot::ti5::DriverPositionLimits driver_limits;
-    std::unique_ptr<robot::ti5::CanMotor> motor;
+    std::unique_ptr<robot::ti5::Joint> joint;
     double start_position{0.0};
     double last_measured{0.0};
     std::uint64_t last_sequence{0};
@@ -504,7 +473,7 @@ DriverStatus queryDriverStatus(
     const std::map<std::string, std::string> &mapping)
 {
     static_cast<void>(mapping);
-    const auto status = joint.motor->queryDriverStatus();
+    const auto status = joint.joint->queryDriverStatus();
     if (!status)
     {
         throw std::runtime_error(
@@ -560,10 +529,19 @@ std::vector<JointRuntime> buildRuntimes(
                 "没有为关节创建 CAN 总线：" + config.bus);
         }
 
-        auto motor = std::make_unique<robot::ti5::CanMotor>(
-            config.motor, *bus->second);
-        const auto queried_position = motor->queryPosition();
-        const auto csp = motor->queryCspStatus();
+        // 本工具刻意使用恒等坐标换算：方向测试记录的是电机输出角正增量
+        // 对应的实际运动。正式 Arm 后续会传入 kinematics.yaml 的方向和零偏。
+        robot::ti5::JointConfig joint_config;
+        joint_config.physical_joint = config;
+        joint_config.motor_position_limits = {
+            safety->second.minimum_rad,
+            safety->second.maximum_rad,
+            safety->second.verified_on_robot};
+        joint_config.coordinate_transform = {1.0, 0.0};
+        auto joint = std::make_unique<robot::ti5::Joint>(
+            joint_config, *bus->second);
+        const auto queried_position = joint->queryPosition();
+        const auto csp = joint->queryMotorCspStatus();
         if (!queried_position || !csp)
         {
             throw std::runtime_error(
@@ -579,14 +557,20 @@ std::vector<JointRuntime> buildRuntimes(
                 "0x08 与 0x41 位置不一致：" + config.name);
         }
 
-        const auto driver_limits = motor->queryPositionLimits();
+        const auto driver_limits = joint->refreshDriverPositionLimits();
         if (!driver_limits)
         {
             throw std::runtime_error(
                 "驱动器位置目标范围查询失败：" + config.name);
         }
+        const auto command_limits = joint->positionCommandLimits();
+        if (!command_limits)
+        {
+            throw std::runtime_error(
+                "软件限位与驱动器限位没有交集：" + config.name);
+        }
 
-        const auto state = motor->latestState();
+        const auto state = joint->latestMotorState();
         if (!state || !state->position_counts)
         {
             throw std::runtime_error(
@@ -597,16 +581,12 @@ std::vector<JointRuntime> buildRuntimes(
         runtime.config = config;
         runtime.safety = safety->second;
         runtime.driver_limits = *driver_limits;
-        runtime.motor = std::move(motor);
+        runtime.joint = std::move(joint);
         runtime.start_position = q0;
         runtime.last_measured = q0;
         runtime.last_sequence = state->csp_update_sequence;
-        runtime.lower_limit = std::max(
-            runtime.safety.minimum,
-            runtime.driver_limits.minimum_rad);
-        runtime.upper_limit = std::min(
-            runtime.safety.maximum,
-            runtime.driver_limits.maximum_rad);
+        runtime.lower_limit = command_limits->minimum_rad;
+        runtime.upper_limit = command_limits->maximum_rad;
         runtime.delta_rad = delta_rad;
 
         const bool outside_driver_limit =
@@ -635,8 +615,8 @@ std::vector<JointRuntime> buildRuntimes(
                     q0, capture_lower, capture_upper);
                 const double capture_distance =
                     std::abs(capture_target - q0);
-                if (capture_target < runtime.safety.minimum ||
-                    capture_target > runtime.safety.maximum)
+                if (capture_target < runtime.safety.minimum_rad ||
+                    capture_target > runtime.safety.maximum_rad)
                 {
                     runtime.skip_reason =
                         "边界接管目标超出 safety.yaml 软件限位";
@@ -747,11 +727,11 @@ void captureAtDriverBoundary(
         }
 
         next_cycle += kControlPeriod;
-        joint.motor->commandPositionCsp(capture_target);
+        joint.joint->commandPositionCsp(capture_target);
         joint.driver_boundary_capture_command_sent = true;
         std::this_thread::sleep_until(next_cycle);
 
-        const auto state = joint.motor->latestState();
+        const auto state = joint.joint->latestMotorState();
         if (!state || !state->position_counts ||
             state->csp_update_sequence <= joint.last_sequence)
         {
@@ -824,7 +804,7 @@ void captureAtDriverBoundary(
         previous_feedback_time = feedback_time;
     }
 
-    const auto final_position = joint.motor->queryPosition();
+    const auto final_position = joint.joint->queryPosition();
     const auto final_status = queryDriverStatus(joint, mapping);
     if (!final_position ||
         std::abs(*final_position - capture_target) > 0.012 ||
@@ -841,7 +821,7 @@ void captureAtDriverBoundary(
     joint.driver_boundary_capture_command_sent = false;
     joint.driver_boundary_capture_target.reset();
 
-    if (const auto final_state = joint.motor->latestState();
+    if (const auto final_state = joint.joint->latestMotorState();
         final_state && final_state->csp_update_sequence > joint.last_sequence)
     {
         joint.last_sequence = final_state->csp_update_sequence;
@@ -870,10 +850,10 @@ void runReadyProbe(JointRuntime &joint)
             throw std::runtime_error("收到中断，停止方向测试");
         }
         next_cycle += kControlPeriod;
-        joint.motor->commandPositionCsp(joint.start_position);
+        joint.joint->commandPositionCsp(joint.start_position);
         std::this_thread::sleep_until(next_cycle);
 
-        const auto state = joint.motor->latestState();
+        const auto state = joint.joint->latestMotorState();
         if (state && state->position_counts &&
             state->csp_update_sequence > joint.last_sequence)
         {
@@ -1045,7 +1025,7 @@ void holdBestEffort(JointRuntime &joint, const double requested_position)
         next_cycle += kControlPeriod;
         try
         {
-            joint.motor->commandPositionCsp(hold_position);
+            joint.joint->commandPositionCsp(hold_position);
         }
         catch (const std::exception &)
         {
@@ -1149,10 +1129,10 @@ void runInteractiveJog(
                 }
             }
 
-            joint.motor->commandPositionCsp(target);
+            joint.joint->commandPositionCsp(target);
             std::this_thread::sleep_until(next_cycle);
 
-            const auto state = joint.motor->latestState();
+            const auto state = joint.joint->latestMotorState();
             if (!state || !state->position_counts ||
                 state->csp_update_sequence <= joint.last_sequence)
             {
@@ -1213,7 +1193,7 @@ void runInteractiveJog(
             try
             {
                 const auto final_position =
-                    joint.motor->queryPosition();
+                    joint.joint->queryPosition();
                 const auto final_status =
                     queryDriverStatus(joint, mapping);
                 if (final_position)

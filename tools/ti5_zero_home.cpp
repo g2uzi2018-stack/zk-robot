@@ -9,8 +9,6 @@
 #include "ti5/config/config_loader.hpp"
 #include "ti5/motor/can_motor.hpp"
 
-#include <yaml-cpp/yaml.h>
-
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -114,12 +112,7 @@ enum class MenuAction
     HoldCurrent,
 };
 
-struct SafetyLimit
-{
-    double minimum{0.0};
-    double maximum{0.0};
-    bool verified_on_robot{false};
-};
+using SafetyLimit = robot::ti5::JointPositionLimits;
 
 struct DriverStatus
 {
@@ -255,32 +248,7 @@ Options parseOptions(const int argc, char **argv)
 std::map<std::string, SafetyLimit> loadSafetyLimits(
     const std::filesystem::path &path)
 {
-    const YAML::Node root = YAML::LoadFile(path.string());
-    const YAML::Node limits = root["position_limits"];
-    if (!limits || !limits.IsMap())
-    {
-        throw std::runtime_error("safety.yaml 缺少 position_limits");
-    }
-
-    std::map<std::string, SafetyLimit> result;
-    for (const auto &entry : limits)
-    {
-        const std::string name = entry.first.as<std::string>();
-        const YAML::Node value = entry.second;
-        SafetyLimit limit{
-            value["min"].as<double>(),
-            value["max"].as<double>(),
-            value["verified_on_robot"].as<bool>(false),
-        };
-        if (!std::isfinite(limit.minimum) ||
-            !std::isfinite(limit.maximum) ||
-            limit.minimum >= limit.maximum)
-        {
-            throw std::runtime_error("无效的软件限位：" + name);
-        }
-        result.emplace(name, limit);
-    }
-    return result;
+    return robot::ti5::loadJointSafetyConfig(path).position_limits;
 }
 
 bool processNamedIsRunning(const std::string &expected_name)
@@ -798,8 +766,8 @@ std::vector<JointRuntime> buildCspRuntimes(
                 config.name + " 的当前位置或 0x1A/0x1B 查询失败");
         }
         const bool outside_host_limit =
-            *position < safety->second.minimum ||
-            *position > safety->second.maximum;
+            *position < safety->second.minimum_rad ||
+            *position > safety->second.maximum_rad;
         const double distance_outside_driver = std::max(
             {driver_limits->minimum_rad - *position,
              *position - driver_limits->maximum_rad,
@@ -830,8 +798,8 @@ std::vector<JointRuntime> buildCspRuntimes(
             shoulder_capture_distance = std::abs(
                 *shoulder_capture_target - *position);
             shoulder_capture_target_inside_host_limit =
-                *shoulder_capture_target >= safety->second.minimum &&
-                *shoulder_capture_target <= safety->second.maximum;
+                *shoulder_capture_target >= safety->second.minimum_rad &&
+                *shoulder_capture_target <= safety->second.maximum_rad;
         }
         const bool known_shoulder_recovery =
             inside_shoulder_recovery_corridor &&
@@ -904,8 +872,8 @@ std::vector<JointRuntime> buildCspRuntimes(
 
         if (require_zero_reachable)
         {
-            if (0.0 < safety->second.minimum + kLimitMarginRad ||
-                0.0 > safety->second.maximum - kLimitMarginRad)
+            if (0.0 < safety->second.minimum_rad + kLimitMarginRad ||
+                0.0 > safety->second.maximum_rad - kLimitMarginRad)
             {
                 throw std::runtime_error(
                     config.name + " 的电机零点不在软件限位安全余量内");
@@ -980,8 +948,8 @@ void validateLoweringTarget(
     const double target,
     const std::string &target_name)
 {
-    if (target < joint.safety.minimum + kLimitMarginRad ||
-        target > joint.safety.maximum - kLimitMarginRad)
+    if (target < joint.safety.minimum_rad + kLimitMarginRad ||
+        target > joint.safety.maximum_rad - kLimitMarginRad)
     {
         std::ostringstream message;
         message << std::fixed << std::setprecision(6)

@@ -1,5 +1,6 @@
 #include "ti5/config/config_loader.hpp"
 
+#include <cmath>
 #include <filesystem>
 #include <iostream>
 #include <stdexcept>
@@ -27,6 +28,10 @@ int main()
             source_root / "config/ti5/t170c/robot.yaml");
         const auto can = robot::ti5::loadCanConfig(
             source_root / "config/ti5/t170c/can.yaml");
+        const auto safety = robot::ti5::loadJointSafetyConfig(
+            source_root / "config/ti5/t170c/safety.yaml");
+        const auto kinematics = robot::ti5::loadKinematicsConfig(
+            source_root / "config/ti5/t170c/kinematics.yaml");
 
         expect(robot.vendor == "TI5" && robot.model == "T170C" &&
                    robot.body_motor_count == 22 && robot.joints.size() == 22,
@@ -61,6 +66,27 @@ int main()
                    can.exclusive_control.lock_file ==
                        "/run/lock/ti5-can-controller.lock",
                "exclusive controller config was not fully loaded");
+        expect(safety.position_limits.size() == 22 &&
+                   safety.position_limits.at("left_shoulder_roll").minimum_rad <
+                       -1.58 &&
+                   !safety.position_limits.at("left_shoulder_roll")
+                        .verified_on_robot,
+               "Joint software position limits were not fully loaded");
+        expect(kinematics.models.size() == 3 &&
+                   kinematics.models.at("t7_t170_left_arm").joints.size() == 7 &&
+                   kinematics.models.at("t7_t170_right_arm").joints.size() == 7 &&
+                   kinematics.models.at("folded_leg_3r").joints.size() == 3,
+               "Joint kinematics model sizes mismatch");
+        const auto &left_pitch = kinematics.models
+                                     .at("t7_t170_left_arm")
+                                     .joints.at("left_shoulder_pitch");
+        const auto &left_roll = kinematics.models
+                                    .at("t7_t170_left_arm")
+                                    .joints.at("left_shoulder_roll");
+        expect(left_pitch.direction == -1.0 &&
+                   std::abs(left_roll.offset_rad +
+                            1.5707963267948966) < 1e-12,
+               "Joint coordinate direction or zero offset mismatch");
 
         std::cout << "TI5 config tests passed\n";
         return 0;

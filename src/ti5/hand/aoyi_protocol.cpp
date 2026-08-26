@@ -88,6 +88,54 @@ std::optional<AoyiPacket> decodePacket(
     return packet;
 }
 
+std::vector<std::uint8_t> encodePositionPayload(
+    const AoyiPositionValues &positions,
+    const AoyiSpeedValues &speeds)
+{
+    std::vector<std::uint8_t> payload;
+    payload.reserve(kAoyiChannelCount * 3);
+    for (std::size_t index = 0; index < kAoyiChannelCount; ++index)
+    {
+        payload.push_back(static_cast<std::uint8_t>(
+            positions[index] & 0xFFU));
+        payload.push_back(static_cast<std::uint8_t>(
+            (positions[index] >> 8U) & 0xFFU));
+        payload.push_back(speeds[index]);
+    }
+    return payload;
+}
+
+std::optional<AoyiHandStatus> decodeStatusPayload(
+    const std::vector<std::uint8_t> &payload)
+{
+    constexpr std::size_t position_bytes = kAoyiChannelCount * 3;
+    if (payload.size() < position_bytes)
+    {
+        return std::nullopt;
+    }
+
+    AoyiHandStatus status;
+    for (std::size_t index = 0; index < kAoyiChannelCount; ++index)
+    {
+        const auto offset = index * 3;
+        status.positions[index] = static_cast<std::uint16_t>(
+            static_cast<std::uint16_t>(payload[offset]) |
+            (static_cast<std::uint16_t>(payload[offset + 1]) << 8U));
+    }
+
+    if (payload.size() >= position_bytes + kAoyiChannelCount)
+    {
+        AoyiForceValues forces{};
+        const auto force_offset = payload.size() - kAoyiChannelCount;
+        std::copy_n(
+            payload.begin() + static_cast<std::ptrdiff_t>(force_offset),
+            kAoyiChannelCount,
+            forces.begin());
+        status.forces = forces;
+    }
+    return status;
+}
+
 std::vector<robot::can::CanFrame> fragmentPacket(
     const std::uint16_t can_id,
     const std::vector<std::uint8_t> &bytes)

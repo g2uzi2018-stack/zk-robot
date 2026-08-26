@@ -66,7 +66,7 @@ receive:
   receive_error_frames: true
 
 control:
-  # 第一阶段采用已有工程验证过的保守参考值，后续可通过实机性能测试调整。
+  # 当前采用已有工程验证过的保守参考值，后续只根据实机证据调整。
   frequency_hz: 100
   inter_frame_gap_us: 50
   post_batch_feedback_wait_us: 200

@@ -8,7 +8,7 @@ startup:
   require_position_feedback: true
 
 control_modes:
-  # 第一版正式驱动只开放已经确认的 Position CSP。
+  # 当前正式驱动只开放已经确认的 Position CSP。
   position_csp:
     supported: true
     allow_motion: true
@@ -39,7 +39,7 @@ position_limits:
     verified_on_robot: false
 
   # ID 2 同时服务 waist_pitch 和 Fold。
-  # 第一版采用两套现有业务限位的保守交集 ±80°。
+  # 当前采用两套现有业务限位的保守交集 ±80°。
   fold_p3:
     min: -1.396263402
     max: 1.396263402

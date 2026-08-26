@@ -177,6 +177,11 @@ void Joint::commandPositionCsp(const double joint_position_rad)
     motor_.commandPositionCsp(jointToMotorPosition(joint_position_rad));
 }
 
+void Joint::requestStopMode()
+{
+    motor_.requestStopMode();
+}
+
 std::optional<double> Joint::queryPosition()
 {
     const auto motor_position = motor_.queryPosition();

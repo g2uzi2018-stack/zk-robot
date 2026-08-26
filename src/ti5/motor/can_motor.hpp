@@ -50,6 +50,10 @@ public:
     // 当前位置、软限位、驱动器目标范围和反馈新鲜度检查。
     void commandPositionCsp(double position_rad);
 
+    // 发送 0x02，请求驱动器进入 STOP 运行模式。该接口不承诺去使能、
+    // 释放转矩或操作抱闸，也不自动等待或验证 mode=0。
+    void requestStopMode();
+
     std::uint16_t nodeId() const noexcept;
 
 private:

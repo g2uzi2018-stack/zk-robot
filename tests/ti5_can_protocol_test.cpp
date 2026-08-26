@@ -92,6 +92,16 @@ int main()
                    2.0 * pi / 100.0),
                "speed conversion failed");
 
+        const auto stop_request = encodeStopModeRequest(node_id);
+        expect(stop_request.id == node_id &&
+                   stop_request.data_length == 1 &&
+                   stop_request.data[0] == 0x02,
+               "0x02 STOP-mode request encoding failed");
+        expect(static_cast<std::uint32_t>(DriverRunMode::Stop) == 0U &&
+                   static_cast<std::uint32_t>(
+                       DriverRunMode::ProfilePosition) == 8U,
+               "confirmed driver run-mode values changed");
+
         const auto position_query = encodePositionQuery(node_id);
         expect(position_query.id == node_id &&
                    position_query.data_length == 1 &&
@@ -176,7 +186,9 @@ int main()
         expectThrows([&] { decodePositionCounts(malformed); },
                      "malformed position response must throw");
         expectThrows([&] { encodePositionQuery(0x800); },
-                     "non-standard node ID must throw");
+                      "non-standard node ID must throw");
+        expectThrows([&] { encodeStopModeRequest(0x800); },
+                     "STOP request must reject a non-standard node ID");
         expectThrows([&] { encodePositionQuery(0); },
                      "zero is not a valid TI5 node ID");
         expectThrows(

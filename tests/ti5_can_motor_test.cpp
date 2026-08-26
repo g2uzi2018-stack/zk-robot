@@ -174,6 +174,15 @@ int main()
                    command.data[3] == 0x01,
                "Position CSP command encoding mismatch");
 
+        motor.requestStopMode();
+        expect(transport_pointer->sent_frames.size() == 2,
+               "STOP-mode request must send one frame");
+        const auto &stop_request = transport_pointer->sent_frames.back();
+        expect(stop_request.id == 23 &&
+                   stop_request.data_length == 1 &&
+                   stop_request.data[0] == 0x02,
+               "CanMotor STOP-mode request encoding mismatch");
+
         transport_pointer->enqueue(cspFrame(23, 1500, 101, 100));
         bus.collectPendingFeedback();
         const auto first_state = motor.latestState();
@@ -215,7 +224,15 @@ int main()
             {
                 transport_pointer->enqueue(cspFrame(frame.id, 1500, 101, 300));
             }
+            else if (frame.data[0] == 0x08)
+            {
+                transport_pointer->enqueue(int32Frame(frame.id, 0x08, 0U));
+            }
         };
+
+        const auto zero_position = motor.queryPosition();
+        expect(zero_position && std::abs(*zero_position) < 1e-12,
+               "zero position feedback must not be treated as missing");
 
         const auto status = motor.queryDriverStatus();
         expect(status && status->run_mode == 8U &&

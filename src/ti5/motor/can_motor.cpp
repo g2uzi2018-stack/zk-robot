@@ -41,7 +41,8 @@ std::optional<double> CanMotor::queryPosition()
     const auto feedback = bus_.queryPosition(
         node_id_,
         std::chrono::milliseconds{50});
-    if (!feedback || !feedback->position_counts)
+    // position_counts=0 是合法的零位反馈，不能把数值 0 当成“无反馈”。
+    if (!feedback)
     {
         return std::nullopt;
     }
@@ -165,6 +166,11 @@ void CanMotor::commandPositionCsp(const double position_rad)
         position_rad,
         encoder_.counts_per_output_revolution);
     bus_.send(encodePositionCsp(node_id_, target_counts));
+}
+
+void CanMotor::requestStopMode()
+{
+    bus_.send(encodeStopModeRequest(node_id_));
 }
 
 std::uint16_t CanMotor::nodeId() const noexcept

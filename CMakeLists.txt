@@ -23,9 +23,6 @@ target_include_directories(robot_can PUBLIC
 
 add_executable(robot
     main.cpp
-    src/ti5/hand/aoyi_protocol.cpp
-    src/ti5/hand/hand_config.cpp
-    src/ti5/hand/hand_discovery.cpp
 )
 
 add_subdirectory(src/tiago)

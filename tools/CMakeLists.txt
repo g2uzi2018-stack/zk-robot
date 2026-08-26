@@ -26,3 +26,17 @@ target_link_libraries(ti5_direction_test PRIVATE
 target_compile_definitions(ti5_direction_test PRIVATE
     TI5_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
 )
+
+add_executable(ti5_arm_check EXCLUDE_FROM_ALL
+    ti5_arm_check.cpp
+)
+
+target_link_libraries(ti5_arm_check PRIVATE
+    ti5_arm
+    spdlog::spdlog
+    fmt::fmt
+)
+
+target_compile_definitions(ti5_arm_check PRIVATE
+    TI5_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+)

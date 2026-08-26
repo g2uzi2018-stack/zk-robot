@@ -42,6 +42,7 @@ target_link_libraries(ti5_motor PUBLIC
 
 add_library(ti5_joint STATIC
     joint/joint.cpp
+    joint/joint_config_builder.cpp
 )
 
 target_include_directories(ti5_joint PUBLIC
@@ -52,7 +53,63 @@ target_link_libraries(ti5_joint PUBLIC
     ti5_motor
 )
 
-target_link_libraries(robot PRIVATE
+add_library(ti5_arm STATIC
+    arm/arm.cpp
+)
+
+target_include_directories(ti5_arm PUBLIC
+    ${CMAKE_SOURCE_DIR}/src
+)
+
+target_link_libraries(ti5_arm PUBLIC
     ti5_joint
+)
+
+add_library(ti5_head STATIC
+    head/head.cpp
+)
+
+target_include_directories(ti5_head PUBLIC
+    ${CMAKE_SOURCE_DIR}/src
+)
+
+target_link_libraries(ti5_head PUBLIC
+    ti5_joint
+)
+
+add_library(ti5_hand STATIC
+    hand/aoyi_protocol.cpp
+    hand/hand_channel.cpp
+    hand/hand_config.cpp
+    hand/hand_discovery.cpp
+)
+
+target_include_directories(ti5_hand PUBLIC
+    ${CMAKE_SOURCE_DIR}/src
+)
+
+target_link_libraries(ti5_hand PUBLIC
+    robot_can
+    yaml-cpp
+    spdlog::spdlog
+    fmt::fmt
+)
+
+add_library(ti5_gripper STATIC
+    gripper/gripper.cpp
+)
+
+target_include_directories(ti5_gripper PUBLIC
+    ${CMAKE_SOURCE_DIR}/src
+)
+
+target_link_libraries(ti5_gripper PUBLIC
+    ti5_hand
+)
+
+target_link_libraries(robot PRIVATE
+    ti5_arm
+    ti5_head
+    ti5_gripper
     ti5_config
 )

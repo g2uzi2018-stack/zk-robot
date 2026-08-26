@@ -238,6 +238,16 @@ int main()
                    command.data[4] == 0,
                "Joint command did not convert model zero offset to motor target");
 
+        joint.requestStopMode();
+        expect(transport_pointer->sent_frames.size() ==
+                   sent_before_command + 2,
+               "Joint STOP-mode request must send one additional frame");
+        const auto &stop_request = transport_pointer->sent_frames.back();
+        expect(stop_request.id == 24 &&
+                   stop_request.data_length == 1 &&
+                   stop_request.data[0] == 0x02,
+               "Joint STOP-mode request did not delegate to its motor");
+
         transport_pointer->enqueue(cspFrame(24, 101, 0));
         const auto velocity = joint.readVelocity();
         expect(velocity &&

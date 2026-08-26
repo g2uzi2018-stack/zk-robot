@@ -1,4 +1,6 @@
 #include "ti5/config/config_loader.hpp"
+#include "ti5/hand/hand_config.hpp"
+#include "ti5/joint/joint_config_builder.hpp"
 
 #include <cmath>
 #include <filesystem>
@@ -32,6 +34,8 @@ int main()
             source_root / "config/ti5/t170c/safety.yaml");
         const auto kinematics = robot::ti5::loadKinematicsConfig(
             source_root / "config/ti5/t170c/kinematics.yaml");
+        const auto hands = robot::ti5::hand::loadHandConfig(
+            source_root / "config/ti5/t170c/hands.yaml");
 
         expect(robot.vendor == "TI5" && robot.model == "T170C" &&
                    robot.body_motor_count == 22 && robot.joints.size() == 22,
@@ -87,6 +91,32 @@ int main()
                    std::abs(left_roll.offset_rad +
                             1.5707963267948966) < 1e-12,
                "Joint coordinate direction or zero offset mismatch");
+
+        const auto left_arm_configs = robot::ti5::makeJointConfigs(
+            robot,
+            safety,
+            &kinematics.models.at("t7_t170_left_arm"));
+        expect(left_arm_configs.size() == 7 &&
+                   left_arm_configs.front().physical_joint.name ==
+                       "left_shoulder_pitch" &&
+                   left_arm_configs.front().coordinate_transform.direction ==
+                       -1.0,
+               "JointConfig model assembly mismatch");
+        const auto all_identity_configs = robot::ti5::makeJointConfigs(
+            robot, safety);
+        expect(all_identity_configs.size() == 22 &&
+                   all_identity_configs.at(5).physical_joint.name ==
+                       "neck_yaw" &&
+                   all_identity_configs.at(5)
+                           .coordinate_transform.direction == 1.0,
+               "identity JointConfig assembly mismatch");
+
+        expect(hands.left.controller_node_id == 70 &&
+                   hands.right.controller_node_id == 60 &&
+                   !hands.left.protocol_verified &&
+                   !hands.left.control_enabled &&
+                   hands.transport.bitrate == 1000000,
+               "Aoyi hand config or default control guard mismatch");
 
         std::cout << "TI5 config tests passed\n";
         return 0;

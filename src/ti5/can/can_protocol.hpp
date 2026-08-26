@@ -18,6 +18,14 @@ namespace robot::ti5
         FaultBits
     };
 
+    // 当前已在本机实机确认、并被正常位置控制流程使用的运行模式值。
+    // 未列出的模式仍按原始 uint32_t 保存，不能仅凭枚举名推断其行为。
+    enum class DriverRunMode : std::uint32_t
+    {
+        Stop = 0,
+        ProfilePosition = 8
+    };
+
     struct DriverStatusFeedback
     {
         std::uint16_t node_id{0};
@@ -51,6 +59,10 @@ namespace robot::ti5
         // 输出端位置计数。
         std::int32_t position_counts{0};
     };
+
+    // 编码 0x02 STOP 请求帧。该命令只表示请求驱动器进入 mode=0，
+    // 不表示伺服去使能、转矩释放或抱闸动作；调用方必须随后查询运行模式。
+    robot::can::CanFrame encodeStopModeRequest(std::uint16_t node_id);
 
     // 编码 0x08 读取当前位置请求帧。
     robot::can::CanFrame encodePositionQuery(std::uint16_t node_id);

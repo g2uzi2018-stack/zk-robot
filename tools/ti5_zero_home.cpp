@@ -59,7 +59,9 @@ constexpr double kLoweringVelocityRadPerSecond = 0.10;
 constexpr double kMaximumAutomaticTravelRad = 0.50;
 constexpr double kMaximumShoulderRollRecoveryTravelRad = 1.62;
 constexpr double kMaximumDriverBoundaryCaptureRad = 0.12;
-constexpr double kDriverBoundaryCaptureMarginRad = 0.005;
+constexpr std::int32_t kDriverBoundaryCaptureInsetCounts = 4;
+constexpr std::int32_t kDriverBoundaryCaptureSpeedToleranceCounts = 2;
+constexpr auto kDriverBoundaryCaptureSpeedWindow = 50ms;
 constexpr double kMaximumDriverBoundaryCaptureSpeedRadPerSecond = 0.20;
 constexpr double kMinimumMoveSeconds = 2.0;
 constexpr int kIntermediateHoldCycles = 50;
@@ -126,6 +128,7 @@ struct FeedbackTracker
     int fresh_cycles{0};
     int stale_cycles{0};
     double measured_position{0.0};
+    std::optional<std::chrono::steady_clock::time_point> last_timestamp;
 };
 
 struct JointRuntime
@@ -678,11 +681,10 @@ void sendStopToBothArms(
         "开始双臂 0x02 STOP：按每条总线从末端到肩部发送，头部不发送 STOP");
     for (const auto &joint : arm_joints)
     {
-        robot::can::CanFrame frame{};
-        frame.id = joint.motor.node_id;
-        frame.data_length = 1;
-        frame.data[0] = 0x02;
-        buses.at(joint.bus)->send(frame);
+        robot::ti5::CanMotor motor{
+            joint.motor,
+            *buses.at(joint.bus)};
+        motor.requestStopMode();
         std::this_thread::sleep_for(20ms);
     }
     std::this_thread::sleep_for(250ms);
@@ -781,12 +783,16 @@ std::vector<JointRuntime> buildCspRuntimes(
         bool shoulder_capture_target_inside_host_limit = false;
         if (inside_shoulder_recovery_corridor)
         {
+            const double capture_inset_rad =
+                robot::ti5::positionCountsToRadians(
+                    kDriverBoundaryCaptureInsetCounts,
+                    config.motor.encoder.counts_per_output_revolution);
             const double capture_lower =
                 driver_limits->minimum_rad +
-                kDriverBoundaryCaptureMarginRad;
+                capture_inset_rad;
             const double capture_upper =
                 driver_limits->maximum_rad -
-                kDriverBoundaryCaptureMarginRad;
+                capture_inset_rad;
             if (capture_lower >= capture_upper)
             {
                 throw std::runtime_error(
@@ -938,6 +944,7 @@ std::vector<JointRuntime> buildCspRuntimes(
         }
         runtime.feedback.last_sequence = state->csp_update_sequence;
         runtime.feedback.measured_position = state_position;
+        runtime.feedback.last_timestamp = state->position_counts->timestamp;
         joints.push_back(std::move(runtime));
     }
     return joints;
@@ -1082,6 +1089,7 @@ double updateFeedback(JointRuntime &joint)
             robot::ti5::positionCountsToRadians(
                 state->position_counts->value,
                 joint.config.motor.encoder.counts_per_output_revolution);
+        joint.feedback.last_timestamp = state->position_counts->timestamp;
     }
 
     if (joint.feedback.stale_cycles >= kMaximumStaleCycles)
@@ -1102,9 +1110,38 @@ void captureShouldersAtDriverBoundary(
             continue;
         }
 
-        const double original_position = joint.start_position;
         const double capture_target =
             *joint.driver_boundary_capture_target;
+        if (!joint.motor->queryCspStatus())
+        {
+            throw std::runtime_error(
+                joint.config.name +
+                " 在驱动器边界接管前无法刷新 CSP 反馈");
+        }
+        const auto baseline_state = joint.motor->latestState();
+        if (!baseline_state || !baseline_state->position_counts)
+        {
+            throw std::runtime_error(
+                joint.config.name +
+                " 在驱动器边界接管前缺少位置反馈");
+        }
+        const double original_position =
+            robot::ti5::positionCountsToRadians(
+                baseline_state->position_counts->value,
+                joint.config.motor.encoder.counts_per_output_revolution);
+        if (std::abs(original_position - joint.start_position) >
+            kPositionAgreementRad)
+        {
+            throw std::runtime_error(
+                joint.config.name +
+                " 在确认期间位置变化超过 0.01 rad，请重新执行并确认");
+        }
+        joint.feedback.last_sequence =
+            baseline_state->csp_update_sequence;
+        joint.feedback.measured_position = original_position;
+        joint.feedback.last_timestamp =
+            baseline_state->position_counts->timestamp;
+
         const double planned_distance =
             std::abs(capture_target - original_position);
         if (planned_distance > kMaximumDriverBoundaryCaptureRad)
@@ -1125,8 +1162,19 @@ void captureShouldersAtDriverBoundary(
         joint.last_commanded = capture_target;
         double previous_measured = original_position;
         double maximum_observed_speed = 0.0;
+        double speed_window_travel = 0.0;
+        double speed_window_seconds = 0.0;
+        std::uint64_t speed_window_sequence_span = 0;
+        const double speed_tolerance_rad =
+            robot::ti5::positionCountsToRadians(
+                kDriverBoundaryCaptureSpeedToleranceCounts,
+                joint.config.motor.encoder.counts_per_output_revolution);
+        const double minimum_speed_window_seconds =
+            std::chrono::duration<double>(
+                kDriverBoundaryCaptureSpeedWindow)
+                .count();
         auto previous_feedback_time =
-            std::chrono::steady_clock::now();
+            *joint.feedback.last_timestamp;
         auto next_cycle = std::chrono::steady_clock::now();
         for (int cycle = 0;
              cycle < kDriverBoundaryCaptureCycles;
@@ -1156,8 +1204,14 @@ void captureShouldersAtDriverBoundary(
             }
             if (joint.feedback.last_sequence > previous_sequence)
             {
+                if (!joint.feedback.last_timestamp)
+                {
+                    throw std::runtime_error(
+                        joint.config.name +
+                        " 的边界接管反馈缺少时间戳");
+                }
                 const auto feedback_time =
-                    std::chrono::steady_clock::now();
+                    *joint.feedback.last_timestamp;
                 const auto sequence_gap =
                     joint.feedback.last_sequence - previous_sequence;
                 const double feedback_interval_seconds =
@@ -1172,28 +1226,44 @@ void captureShouldersAtDriverBoundary(
                 }
                 const double position_step =
                     measured - previous_measured;
-                const double observed_speed =
-                    std::abs(position_step) /
-                    feedback_interval_seconds;
-                maximum_observed_speed = std::max(
-                    maximum_observed_speed, observed_speed);
-                if (observed_speed >
-                    kMaximumDriverBoundaryCaptureSpeedRadPerSecond)
+                speed_window_travel += std::abs(position_step);
+                speed_window_seconds += feedback_interval_seconds;
+                speed_window_sequence_span += sequence_gap;
+                if (speed_window_seconds >=
+                    minimum_speed_window_seconds)
                 {
-                    std::ostringstream message;
-                    message << std::fixed << std::setprecision(6)
-                            << joint.config.name
-                            << " 的边界接管观测速度="
-                            << observed_speed
-                            << " rad/s，超过上限 "
-                            << kMaximumDriverBoundaryCaptureSpeedRadPerSecond
-                            << " rad/s；反馈 " << previous_measured
-                            << " -> " << measured
-                            << " rad，位移=" << position_step
-                            << " rad，实际 dt="
-                            << feedback_interval_seconds
-                            << " s，sequence_gap=" << sequence_gap;
-                    throw std::runtime_error(message.str());
+                    const double observed_speed =
+                        speed_window_travel / speed_window_seconds;
+                    const double corrected_speed =
+                        std::max(
+                            0.0,
+                            speed_window_travel - speed_tolerance_rad) /
+                        speed_window_seconds;
+                    maximum_observed_speed = std::max(
+                        maximum_observed_speed, corrected_speed);
+                    if (corrected_speed >
+                        kMaximumDriverBoundaryCaptureSpeedRadPerSecond)
+                    {
+                        std::ostringstream message;
+                        message << std::fixed << std::setprecision(6)
+                                << joint.config.name
+                                << " 的边界接管连续反馈窗口观测速度="
+                                << observed_speed
+                                << " rad/s，扣除 2 个编码器计数的分辨率后="
+                                << corrected_speed
+                                << " rad/s，超过上限 "
+                                << kMaximumDriverBoundaryCaptureSpeedRadPerSecond
+                                << " rad/s；窗口累计位移="
+                                << speed_window_travel
+                                << " rad，窗口时长="
+                                << speed_window_seconds
+                                << " s，反馈序号跨度="
+                                << speed_window_sequence_span;
+                        throw std::runtime_error(message.str());
+                    }
+                    speed_window_travel = 0.0;
+                    speed_window_seconds = 0.0;
+                    speed_window_sequence_span = 0;
                 }
                 previous_measured = measured;
                 previous_feedback_time = feedback_time;
@@ -1216,7 +1286,7 @@ void captureShouldersAtDriverBoundary(
         joint.last_commanded = capture_target;
         joint.feedback.measured_position = *final_position;
         robot::common::logger()->info(
-            "{} 边界接管完成：mode=8、fault=0，最大观测速度 {:.6f} rad/s",
+            "{} 边界接管完成：mode=8、fault=0，最大校正后观测速度 {:.6f} rad/s",
             joint.config.name,
             maximum_observed_speed);
     }

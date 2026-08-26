@@ -15,6 +15,7 @@ namespace
     constexpr std::uint8_t kMaximumCanDataLength = 8;
 
     // TI5 T170C 应用层命令码。
+    constexpr std::uint8_t kStopModeCommand = 0x02;
     constexpr std::uint8_t kRunModeQueryCommand = 0x03;
     constexpr std::uint8_t kPositionQueryCommand = 0x08;
     constexpr std::uint8_t kFaultQueryCommand = 0x0A;
@@ -156,6 +157,17 @@ namespace
 
 namespace robot::ti5
 {
+    robot::can::CanFrame encodeStopModeRequest(const std::uint16_t node_id)
+    {
+        validateNodeId(node_id);
+
+        robot::can::CanFrame frame{};
+        frame.id = node_id;
+        frame.data_length = 1;
+        frame.data[0] = kStopModeCommand;
+        return frame;
+    }
+
     // 编码 0x08 读取当前位置请求帧。
     robot::can::CanFrame encodePositionQuery(std::uint16_t node_id)
     {

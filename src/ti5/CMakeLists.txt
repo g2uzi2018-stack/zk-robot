@@ -107,9 +107,23 @@ target_link_libraries(ti5_gripper PUBLIC
     ti5_hand
 )
 
-target_link_libraries(robot PRIVATE
+add_library(ti5_controller STATIC
+    controller/arm_controller.cpp
+    controller/head_controller.cpp
+    controller/gripper_controller.cpp
+)
+
+target_include_directories(ti5_controller PUBLIC
+    ${CMAKE_SOURCE_DIR}/src
+)
+
+target_link_libraries(ti5_controller PUBLIC
     ti5_arm
     ti5_head
     ti5_gripper
+)
+
+target_link_libraries(robot PRIVATE
+    ti5_controller
     ti5_config
 )

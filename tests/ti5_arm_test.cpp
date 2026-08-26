@@ -1,5 +1,6 @@
 #include "ti5/arm/arm.hpp"
 #include "ti5/can/encoder_conversion.hpp"
+#include "ti5/controller/arm_controller.hpp"
 
 #include <algorithm>
 #include <array>
@@ -344,6 +345,18 @@ int main()
         expect(arm.hasSentPositionCommand(),
                "Arm did not record successful 0x44 transmission");
 
+        robot::ti5::ArmController controller(arm);
+        const auto position_frames_before_controller_start =
+            countCommand(transport_pointer->sent_frames, 0x44);
+        controller.start();
+        expect(controller.state() ==
+                   robot::ti5::ArmController::ControlState::Running &&
+                   controller.currentState() &&
+                   controller.targetReached(1e-9) &&
+                   countCommand(transport_pointer->sent_frames, 0x44) ==
+                       position_frames_before_controller_start,
+               "ArmController did not start from feedback without sending");
+
         const auto state = arm.readState();
         expect(state.all_positions_available &&
                    state.all_csp_feedback_fresh,
@@ -367,29 +380,41 @@ int main()
         const auto position_frames_before_rejection =
             countCommand(transport_pointer->sent_frames, 0x44);
         expectThrow<std::out_of_range>(
-            [&arm, &invalid_target]()
+            [&controller, &invalid_target]()
             {
-                arm.commandPositionsCsp(invalid_target);
+                controller.setTarget(invalid_target);
             },
-            "Arm accepted a target outside driver limits");
+            "ArmController accepted a target outside driver limits");
         expect(countCommand(transport_pointer->sent_frames, 0x44) ==
                    position_frames_before_rejection,
-               "Arm sent a partial batch before rejecting one invalid joint");
-        expect(arm.controlState() ==
-                   robot::ti5::ArmControlState::PositionControlActive,
-               "pre-send validation error incorrectly failed the Arm");
+               "ArmController sent before rejecting one invalid joint");
+        expect(controller.state() ==
+                   robot::ti5::ArmController::ControlState::Running,
+               "target validation error incorrectly failed ArmController");
 
         robot::ti5::Arm::JointValues valid_target{};
         valid_target.fill(0.1);
-        arm.commandPositionsCsp(valid_target);
+        controller.setTarget(valid_target);
+        expect(countCommand(transport_pointer->sent_frames, 0x44) ==
+                   position_frames_before_rejection,
+               "ArmController setTarget sent before update");
+        controller.update();
         expect(countCommand(transport_pointer->sent_frames, 0x44) ==
                    position_frames_before_rejection + 7,
-               "valid Arm target did not send exactly seven position frames");
+               "ArmController update did not send seven position frames");
+        expect(controller.targetReached(5e-5),
+               "ArmController did not retain updated feedback");
+        controller.holdCurrentPosition();
+        expect(controller.targetReached(5e-5),
+               "ArmController hold did not use current feedback");
 
         const auto stop_start = transport_pointer->sent_frames.size();
-        arm.requestStopModeAndConfirm();
+        controller.stopAndConfirm();
         expect(arm.controlState() == robot::ti5::ArmControlState::Stopped,
-               "Arm did not confirm seven-joint mode 0 after STOP");
+               "ArmController did not confirm seven-joint mode 0 after STOP");
+        expect(controller.state() ==
+                   robot::ti5::ArmController::ControlState::Idle,
+               "ArmController did not return to Idle after confirmed STOP");
         expect(transport_pointer->sent_frames.size() >= stop_start + 7,
                "Arm did not send seven STOP requests");
         for (std::size_t index = 0; index < 7; ++index)

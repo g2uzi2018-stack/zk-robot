@@ -1,4 +1,5 @@
 #include "ti5/can/encoder_conversion.hpp"
+#include "ti5/controller/head_controller.hpp"
 #include "ti5/head/head.hpp"
 
 #include <algorithm>
@@ -265,6 +266,17 @@ int main()
         expect(head.controlState() ==
                    robot::ti5::HeadControlState::PositionControlActive,
                "Head did not establish position control");
+
+        robot::ti5::HeadController controller(head);
+        const auto before_controller_start =
+            countCommand(transport_pointer->sent, 0x44);
+        controller.start();
+        expect(controller.state() ==
+                   robot::ti5::HeadController::ControlState::Running &&
+                   controller.targetReached(1e-9) &&
+                   countCommand(transport_pointer->sent, 0x44) ==
+                       before_controller_start,
+               "HeadController did not start from feedback without sending");
         const auto state = head.readState();
         expect(state.all_positions_available &&
                    state.all_csp_feedback_fresh,
@@ -274,21 +286,30 @@ int main()
         invalid[1] = 0.55;
         const auto before = countCommand(transport_pointer->sent, 0x44);
         expectThrow<std::out_of_range>(
-            [&head, &invalid]() { head.commandPositionsCsp(invalid); },
-            "Head accepted a target outside driver limits");
+            [&controller, &invalid]() { controller.setTarget(invalid); },
+            "HeadController accepted a target outside driver limits");
         expect(countCommand(transport_pointer->sent, 0x44) == before,
-               "Head sent a partial invalid target batch");
+               "HeadController sent before rejecting an invalid target");
 
         robot::ti5::Head::JointValues target{};
         target.fill(0.1);
-        head.commandPositionsCsp(target);
+        controller.setTarget(target);
+        expect(countCommand(transport_pointer->sent, 0x44) == before,
+               "HeadController setTarget sent before update");
+        controller.update();
         expect(countCommand(transport_pointer->sent, 0x44) == before + 3,
-               "Head valid target did not send three frames");
+               "HeadController update did not send three frames");
+        expect(controller.targetReached(5e-5),
+               "HeadController did not retain updated feedback");
+        controller.holdCurrentPosition();
 
         const auto stop_start = transport_pointer->sent.size();
-        head.requestStopModeAndConfirm();
+        controller.stopAndConfirm();
         expect(head.controlState() == robot::ti5::HeadControlState::Stopped,
-               "Head STOP was not confirmed");
+               "HeadController STOP was not confirmed");
+        expect(controller.state() ==
+                   robot::ti5::HeadController::ControlState::Idle,
+               "HeadController did not return to Idle after STOP");
         for (std::size_t index = 0; index < 3; ++index)
         {
             const auto &frame = transport_pointer->sent[stop_start + index];

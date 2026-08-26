@@ -33,7 +33,7 @@ add_executable(ti5_arm_test
 )
 
 target_link_libraries(ti5_arm_test PRIVATE
-    ti5_arm
+    ti5_controller
 )
 
 add_test(NAME ti5_arm COMMAND ti5_arm_test)
@@ -43,7 +43,7 @@ add_executable(ti5_head_test
 )
 
 target_link_libraries(ti5_head_test PRIVATE
-    ti5_head
+    ti5_controller
 )
 
 add_test(NAME ti5_head COMMAND ti5_head_test)
@@ -53,7 +53,7 @@ add_executable(ti5_gripper_test
 )
 
 target_link_libraries(ti5_gripper_test PRIVATE
-    ti5_gripper
+    ti5_controller
 )
 
 add_test(NAME ti5_gripper COMMAND ti5_gripper_test)

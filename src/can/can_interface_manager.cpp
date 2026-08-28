@@ -74,6 +74,12 @@ private:
         throw std::runtime_error(
             operation + " 失败：缺少 CAP_NET_ADMIN（或需要 root 权限）");
     }
+    if (error_code == ENODEV)
+    {
+        throw std::runtime_error(
+            operation +
+            " 失败：内核无法启动 CAN 适配器硬件；请检查或重新连接对应的 USB-CAN");
+    }
 
     throw std::runtime_error(
         operation + " 失败: " + std::string(std::strerror(error_code)));

@@ -48,15 +48,15 @@ target_link_libraries(ti5_head_test PRIVATE
 
 add_test(NAME ti5_head COMMAND ti5_head_test)
 
-add_executable(ti5_gripper_test
-    ti5_gripper_test.cpp
+add_executable(ti5_hand_test
+    ti5_hand_test.cpp
 )
 
-target_link_libraries(ti5_gripper_test PRIVATE
+target_link_libraries(ti5_hand_test PRIVATE
     ti5_controller
 )
 
-add_test(NAME ti5_gripper COMMAND ti5_gripper_test)
+add_test(NAME ti5_hand COMMAND ti5_hand_test)
 
 add_executable(ti5_config_test
     ti5_config_test.cpp
@@ -65,7 +65,7 @@ add_executable(ti5_config_test
 target_link_libraries(ti5_config_test PRIVATE
     ti5_config
     ti5_joint
-    ti5_hand
+    ti5_hand_transport
 )
 
 target_compile_definitions(ti5_config_test PRIVATE
@@ -73,3 +73,29 @@ target_compile_definitions(ti5_config_test PRIVATE
 )
 
 add_test(NAME ti5_config COMMAND ti5_config_test)
+
+# MoveJ 是纯数学规划测试：不打开 CAN，也不依赖任何具体机器人实现。
+add_executable(motion_move_j_test
+    motion_move_j_test.cpp
+)
+
+target_include_directories(motion_move_j_test PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+)
+
+target_link_libraries(motion_move_j_test PRIVATE
+    robot_motion
+)
+
+add_test(NAME motion_move_j COMMAND motion_move_j_test)
+
+# 笛卡尔直线路径同样是纯数学测试：不执行 IK，不连接 Executor 或硬件。
+add_executable(motion_cartesian_line_path_test
+    motion_cartesian_line_path_test.cpp
+)
+
+target_link_libraries(motion_cartesian_line_path_test PRIVATE
+    robot_motion
+)
+
+add_test(NAME motion_cartesian_line_path COMMAND motion_cartesian_line_path_test)

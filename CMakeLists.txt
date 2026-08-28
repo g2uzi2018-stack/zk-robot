@@ -10,6 +10,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 find_package(spdlog REQUIRED)
 find_package(yaml-cpp REQUIRED)
+find_package(Eigen3 3.3 REQUIRED NO_MODULE)
 
 # 与具体机器人型号无关的 Linux SocketCAN 公共层。
 add_library(robot_can STATIC
@@ -25,6 +26,7 @@ add_executable(robot
     main.cpp
 )
 
+add_subdirectory(src/motion)
 add_subdirectory(src/tiago)
 add_subdirectory(src/ti5)
 add_subdirectory(tools)
@@ -39,6 +41,7 @@ target_include_directories(robot PRIVATE
 
 target_link_libraries(robot PRIVATE
     robot_can
+    robot_motion
     yaml-cpp
     spdlog::spdlog
     fmt::fmt

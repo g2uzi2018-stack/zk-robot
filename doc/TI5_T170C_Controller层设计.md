@@ -5,8 +5,13 @@
 TI5 保持与 TIAGo 相同的理解方式：
 
 ```text
-CAN -> Motor -> Joint -> Arm / Head / Gripper -> Controller -> Motion / Executor
+本体 CAN -> Motor -> Joint -> Arm / Head -> ArmController / HeadController
+手部 CAN -> HandTransport -> Hand -> HandController
+各部件 Controller -> Motion / Executor
 ```
+
+灵巧手不使用本体电机协议，所以不经过 Motor 和 Joint；但 `Hand` 与 Arm、
+Head 一样属于机器人部件层。
 
 Controller 只负责保存最新目标和执行一个周期，不创建线程，不决定周期频率，
 也不生成轨迹。上层 Motion 将已经规划好的每周期位置点交给 Controller，
@@ -17,7 +22,7 @@ Controller 只负责保存最新目标和执行一个周期，不创建线程，
 - `setTarget()` 只替换最新目标，不直接访问 CAN；
 - 多个目标在一个控制周期内到达时，以最后一个为准；
 - `update()` 是唯一的周期下发入口；
-- Controller 不拥有 Arm、Head 或 Gripper，它们的生命周期由外部管理；
+- Controller 不拥有 Arm、Head 或 Hand，它们的生命周期由外部管理；
 - Controller 不负责插值、逆运动学、路径规划、线程和消息队列；
 - 非法新目标先被完整拒绝，原有目标不变；
 - 控制状态采用 `Idle / Running / Failed`。
@@ -54,9 +59,9 @@ Controller 的 `start()` 本身不发送位置命令，因此第一次 `update()
 Controller 运行失败后不会继续周期访问硬件，但仍允许显式调用
 `stopAndConfirm()`，避免错误状态封死已经确认的停止通道。
 
-### 3.4 TI5 Gripper 实际是六通道灵巧手
+### 3.4 TI5 Hand 是六通道灵巧手
 
-GripperController 保存六路原始位置和六路速度字节，并由 `update()` 下发
+HandController 保存六路原始位置和六路速度字节，并由 `update()` 下发
 已经确认的 `0x50` 命令。只有配置中的 `protocol_verified` 和
 `control_enabled` 同时为真才允许启动控制。
 
@@ -65,7 +70,7 @@ GripperController 保存六路原始位置和六路速度字节，并由 `update
 
 ## 4. 周期调用约束
 
-- 同一个 Arm、Head 或 Gripper 及其 Controller 只能由一个控制循环访问；
+- 同一个 Arm、Head 或 Hand 及其 Controller 只能由一个控制循环访问；
 - 调用方负责按固定周期调用 `update()`；
 - Arm 和 Head 的目标必须是相应周期的已规划位置点；
 - `Failed` 后先记录错误并判断机械状态，再执行已确认的恢复或停止流程；
@@ -74,5 +79,5 @@ GripperController 保存六路原始位置和六路速度字节，并由 `update
 ## 5. 当前范围
 
 本层包含左臂、右臂共用的 ArmController、三关节 HeadController，以及左右
-灵巧手共用的 GripperController。腰部尚未纳入，等腰部协议和部件层确认后
+灵巧手共用的 HandController。腰部尚未纳入，等腰部协议和部件层确认后
 再按同样层级接入。

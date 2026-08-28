@@ -1,5 +1,5 @@
-#include "ti5/controller/gripper_controller.hpp"
-#include "ti5/gripper/gripper.hpp"
+#include "ti5/controller/hand_controller.hpp"
+#include "ti5/hand/hand.hpp"
 #include "ti5/hand/aoyi_protocol.hpp"
 
 #include <chrono>
@@ -176,15 +176,15 @@ int main()
         auto read_only_transport =
             std::make_unique<FakeHandTransport>(70);
         auto *read_only_pointer = read_only_transport.get();
-        Gripper read_only(
-            GripperSide::Left,
+        Hand read_only(
+            HandSide::Left,
             leftConfig(false),
             std::move(read_only_transport),
             std::chrono::milliseconds{100});
         expect(read_only.name() == "left_hand" &&
                    read_only.controllerNodeId() == 70 &&
                    !read_only.controlAllowed(),
-               "read-only Gripper identity or control guard mismatch");
+               "read-only Hand identity or control guard mismatch");
 
         const auto state = read_only.readState();
         expect(state && state->positions_raw[0] == 100 &&
@@ -192,45 +192,45 @@ int main()
                    state->forces_raw &&
                    (*state->forces_raw)[0] == 10 &&
                    (*state->forces_raw)[5] == 15,
-               "Gripper status decode failed");
+               "Hand status decode failed");
 
-        Gripper::PositionValues positions{};
-        Gripper::SpeedValues speeds{};
+        Hand::PositionValues positions{};
+        Hand::SpeedValues speeds{};
         positions.fill(500);
         speeds.fill(20);
 
-        GripperController read_only_controller(read_only);
+        HandController read_only_controller(read_only);
         expectThrow<std::logic_error>(
             [&]() { read_only_controller.start(speeds); },
-            "read-only GripperController started control");
+            "read-only HandController started control");
         expect(read_only_controller.state() ==
-                   GripperController::ControlState::Idle,
-               "configuration rejection changed GripperController state");
+                   HandController::ControlState::Idle,
+               "configuration rejection changed HandController state");
 
         const auto sent_before_rejection = read_only_pointer->sent.size();
         expectThrow<std::logic_error>(
             [&]() { read_only.commandPositionsRaw(positions, speeds); },
-            "read-only Gripper accepted a motion command");
+            "read-only Hand accepted a motion command");
         expect(read_only_pointer->sent.size() == sent_before_rejection,
-               "disabled Gripper sent frames before rejecting control");
+               "disabled Hand sent frames before rejecting control");
 
         auto enabled_transport = std::make_unique<FakeHandTransport>(70);
         auto *enabled_pointer = enabled_transport.get();
-        Gripper enabled(
-            GripperSide::Left,
+        Hand enabled(
+            HandSide::Left,
             leftConfig(true),
             std::move(enabled_transport),
             std::chrono::milliseconds{100});
-        GripperController controller(enabled);
+        HandController controller(enabled);
         controller.start(speeds);
         expect(controller.state() ==
-                   GripperController::ControlState::Running &&
+                   HandController::ControlState::Running &&
                    controller.targetReachedRaw(0),
-               "GripperController did not capture current position on start");
+               "HandController did not capture current position on start");
         const auto frames_before_target = enabled_pointer->sent.size();
         controller.setTarget(positions, speeds);
         expect(enabled_pointer->sent.size() == frames_before_target,
-               "GripperController setTarget sent before update");
+               "HandController setTarget sent before update");
         controller.update();
         const auto packet = decodeSentPacket(enabled_pointer->sent, 70);
         expect(packet &&
@@ -240,10 +240,10 @@ int main()
                    packet->payload[0] == 0xF4 &&
                    packet->payload[1] == 0x01 &&
                    packet->payload[2] == 20,
-               "GripperController 0x50 position packet mismatch");
+               "HandController 0x50 position packet mismatch");
         controller.pause();
-        expect(controller.state() == GripperController::ControlState::Idle,
-               "GripperController pause did not return to Idle");
+        expect(controller.state() == HandController::ControlState::Idle,
+               "HandController pause did not return to Idle");
         const auto position_commands_before_idle_update = countSentCommand(
             enabled_pointer->sent,
             70,
@@ -254,26 +254,26 @@ int main()
                    70,
                    hand::kAoyiSetPositionsCommand) ==
                    position_commands_before_idle_update,
-               "paused GripperController continued sending 0x50");
+               "paused HandController continued sending 0x50");
 
         auto wrong_transport = std::make_unique<FakeHandTransport>(70);
         expectThrow<std::invalid_argument>(
             [&]()
             {
-                Gripper wrong_side(
-                    GripperSide::Right,
+                Hand wrong_side(
+                    HandSide::Right,
                     leftConfig(false),
                     std::move(wrong_transport),
                     std::chrono::milliseconds{100});
             },
-            "Gripper accepted a mismatched side config");
+            "Hand accepted a mismatched side config");
 
-        std::cout << "TI5 Gripper tests passed\n";
+        std::cout << "TI5 Hand tests passed\n";
         return 0;
     }
     catch (const std::exception &error)
     {
-        std::cerr << "TI5 Gripper test failed: " << error.what() << '\n';
+        std::cerr << "TI5 Hand test failed: " << error.what() << '\n';
         return 1;
     }
 }

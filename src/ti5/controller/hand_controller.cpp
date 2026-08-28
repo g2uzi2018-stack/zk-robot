@@ -1,37 +1,36 @@
-#include "ti5/controller/gripper_controller.hpp"
+#include "ti5/controller/hand_controller.hpp"
 
-#include <algorithm>
 #include <stdexcept>
 
 namespace robot::ti5
 {
 
-GripperController::GripperController(Gripper &gripper)
-    : gripper_(gripper)
+HandController::HandController(Hand &hand)
+    : hand_(hand)
 {
 }
 
-void GripperController::start(
-    const Gripper::SpeedValues &holding_speeds)
+void HandController::start(
+    const Hand::SpeedValues &holding_speeds)
 {
     if (state_ != ControlState::Idle)
     {
         throw std::logic_error(
-            "TI5 GripperController can only start from Idle state");
+            "TI5 HandController can only start from Idle state");
     }
-    if (!gripper_.controlAllowed())
+    if (!hand_.controlAllowed())
     {
         throw std::logic_error(
-            "TI5 GripperController control is disabled by configuration");
+            "TI5 HandController control is disabled by configuration");
     }
 
     try
     {
-        const auto snapshot = gripper_.readState();
+        const auto snapshot = hand_.readState();
         if (!snapshot)
         {
             throw std::runtime_error(
-                "TI5 GripperController requires current hand status");
+                "TI5 HandController requires current hand status");
         }
         current_state_ = snapshot;
         target_positions_ = snapshot->positions_raw;
@@ -45,41 +44,41 @@ void GripperController::start(
     }
 }
 
-void GripperController::setTarget(
-    const Gripper::PositionValues &target_positions,
-    const Gripper::SpeedValues &speeds)
+void HandController::setTarget(
+    const Hand::PositionValues &target_positions,
+    const Hand::SpeedValues &speeds)
 {
     if (state_ != ControlState::Running)
     {
         throw std::logic_error(
-            "TI5 GripperController target requires Running state");
+            "TI5 HandController target requires Running state");
     }
     target_positions_ = target_positions;
     speeds_ = speeds;
 }
 
-void GripperController::pause()
+void HandController::pause()
 {
     if (state_ != ControlState::Running)
     {
         throw std::logic_error(
-            "TI5 GripperController can only pause from Running state");
+            "TI5 HandController can only pause from Running state");
     }
     state_ = ControlState::Idle;
 }
 
-void GripperController::reset()
+void HandController::reset()
 {
     if (state_ != ControlState::Failed)
     {
         throw std::logic_error(
-            "TI5 GripperController can only reset from Failed state");
+            "TI5 HandController can only reset from Failed state");
     }
     current_state_.reset();
     state_ = ControlState::Idle;
 }
 
-void GripperController::update()
+void HandController::update()
 {
     if (state_ == ControlState::Failed)
     {
@@ -88,15 +87,15 @@ void GripperController::update()
 
     try
     {
-        current_state_ = gripper_.readState();
+        current_state_ = hand_.readState();
         if (!current_state_)
         {
             throw std::runtime_error(
-                "TI5 GripperController did not receive hand status");
+                "TI5 HandController did not receive hand status");
         }
         if (state_ == ControlState::Running)
         {
-            gripper_.commandPositionsRaw(target_positions_, speeds_);
+            hand_.commandPositionsRaw(target_positions_, speeds_);
         }
     }
     catch (...)
@@ -106,29 +105,29 @@ void GripperController::update()
     }
 }
 
-GripperController::ControlState GripperController::state() const noexcept
+HandController::ControlState HandController::state() const noexcept
 {
     return state_;
 }
 
-const std::optional<GripperState> &
-GripperController::currentState() const noexcept
+const std::optional<HandState> &
+HandController::currentState() const noexcept
 {
     return current_state_;
 }
 
-const Gripper::PositionValues &
-GripperController::targetPositions() const noexcept
+const Hand::PositionValues &
+HandController::targetPositions() const noexcept
 {
     return target_positions_;
 }
 
-const Gripper::SpeedValues &GripperController::speeds() const noexcept
+const Hand::SpeedValues &HandController::speeds() const noexcept
 {
     return speeds_;
 }
 
-bool GripperController::targetReachedRaw(
+bool HandController::targetReachedRaw(
     const std::uint16_t position_tolerance_raw) const
 {
     if (!current_state_)

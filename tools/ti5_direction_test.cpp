@@ -58,7 +58,7 @@ constexpr std::int32_t kDriverBoundaryCaptureInsetCounts = 4;
 constexpr std::int32_t kDriverBoundaryCaptureSpeedToleranceCounts = 2;
 constexpr auto kDriverBoundaryCaptureSpeedWindow = 50ms;
 constexpr double kMaximumShoulderRollRecoveryTravelRad = 1.62;
-constexpr double kMaximumDriverBoundaryCaptureSpeedRadPerSecond = 0.20;
+constexpr double kMaximumDriverBoundaryCaptureSpeedRadPerSecond = 0.30;
 constexpr double kPositionAgreementRad = 0.01;
 constexpr auto kKeyReleaseTimeout = 150ms;
 

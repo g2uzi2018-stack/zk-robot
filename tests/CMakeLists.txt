@@ -99,3 +99,27 @@ target_link_libraries(motion_cartesian_line_path_test PRIVATE
 )
 
 add_test(NAME motion_cartesian_line_path COMMAND motion_cartesian_line_path_test)
+
+add_executable(exoskeleton_protocol_test
+    exoskeleton_protocol_test.cpp
+)
+
+target_link_libraries(exoskeleton_protocol_test PRIVATE
+    exoskeleton_input
+)
+
+target_compile_definitions(exoskeleton_protocol_test PRIVATE
+    EXOSKELETON_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+)
+
+add_test(NAME exoskeleton_protocol COMMAND exoskeleton_protocol_test)
+
+add_executable(exoskeleton_stream_decoder_test
+    exoskeleton_stream_decoder_test.cpp
+)
+
+target_link_libraries(exoskeleton_stream_decoder_test PRIVATE
+    exoskeleton_input
+)
+
+add_test(NAME exoskeleton_stream_decoder COMMAND exoskeleton_stream_decoder_test)

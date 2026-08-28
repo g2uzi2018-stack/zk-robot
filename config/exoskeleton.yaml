@@ -1,0 +1,6 @@
+exoskeleton:
+  device: /dev/exoskeleton
+  baudrate: 2000000
+
+  stale_timeout_ms: 100
+  reconnect_interval_ms: 1000

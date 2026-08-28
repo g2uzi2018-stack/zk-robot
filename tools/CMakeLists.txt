@@ -55,3 +55,15 @@ target_link_libraries(ti5_hand_check PRIVATE
 target_compile_definitions(ti5_hand_check PRIVATE
     TI5_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
 )
+
+add_executable(exoskeleton_monitor
+    exoskeleton_monitor.cpp
+)
+
+target_link_libraries(exoskeleton_monitor PRIVATE
+    exoskeleton_input
+)
+
+set_target_properties(exoskeleton_monitor PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}"
+)

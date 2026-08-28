@@ -1,0 +1,392 @@
+#include "input/exoskeleton/exoskeleton.hpp"
+
+#include <limits>
+#include <stdexcept>
+#include <utility>
+
+#include <yaml-cpp/yaml.h>
+
+namespace
+{
+
+[[noreturn]] void throwConfigError(
+    const std::string &context,
+    const std::string &message)
+{
+    throw std::invalid_argument(context + ": " + message);
+}
+
+YAML::Node loadYamlFile(const std::filesystem::path &path)
+{
+    try
+    {
+        return YAML::LoadFile(path.string());
+    }
+    catch (const YAML::Exception &error)
+    {
+        throwConfigError(
+            path.string(),
+            "unable to read or parse YAML: " + std::string(error.what()));
+    }
+}
+
+YAML::Node requireMap(
+    const YAML::Node &parent,
+    const char *key,
+    const std::string &context)
+{
+    const auto value = parent[key];
+    if (!value || !value.IsMap())
+    {
+        throwConfigError(
+            context + "." + key,
+            "must be a YAML mapping");
+    }
+    return value;
+}
+
+YAML::Node requireScalar(
+    const YAML::Node &parent,
+    const char *key,
+    const std::string &context)
+{
+    const auto value = parent[key];
+    if (!value || !value.IsScalar())
+    {
+        throwConfigError(
+            context + "." + key,
+            "must be a YAML scalar");
+    }
+    return value;
+}
+
+std::string requireString(
+    const YAML::Node &parent,
+    const char *key,
+    const std::string &context)
+{
+    try
+    {
+        return requireScalar(parent, key, context).as<std::string>();
+    }
+    catch (const YAML::Exception &error)
+    {
+        throwConfigError(
+            context + "." + key,
+            "must be a string: " + std::string(error.what()));
+    }
+}
+
+std::uint64_t requireUnsigned(
+    const YAML::Node &parent,
+    const char *key,
+    const std::string &context)
+{
+    try
+    {
+        const auto value = requireScalar(parent, key, context).as<std::int64_t>();
+        if (value < 0)
+        {
+            throwConfigError(
+                context + "." + key,
+                "must not be negative");
+        }
+        return static_cast<std::uint64_t>(value);
+    }
+    catch (const YAML::Exception &error)
+    {
+        throwConfigError(
+            context + "." + key,
+            "must be a non-negative integer: " + std::string(error.what()));
+    }
+}
+
+std::chrono::milliseconds requireMilliseconds(
+    const YAML::Node &parent,
+    const char *key,
+    const std::string &context)
+{
+    const auto value = requireUnsigned(parent, key, context);
+    using Rep = std::chrono::milliseconds::rep;
+    if (value == 0 || value > static_cast<std::uint64_t>(
+                              std::numeric_limits<Rep>::max()))
+    {
+        throwConfigError(
+            context + "." + key,
+            "must be greater than zero and fit in milliseconds");
+    }
+    return std::chrono::milliseconds{static_cast<Rep>(value)};
+}
+
+} // namespace
+
+namespace robot::input::exoskeleton
+{
+
+ExoskeletonConfig loadExoskeletonConfig(
+    const std::filesystem::path &config_path)
+{
+    const auto root = loadYamlFile(config_path);
+    const auto context = config_path.string();
+    if (!root || !root.IsMap())
+    {
+        throwConfigError(context, "root must be a YAML mapping");
+    }
+
+    const auto exoskeleton = requireMap(root, "exoskeleton", context);
+    const auto exoskeleton_context = context + ".exoskeleton";
+
+    ExoskeletonConfig result;
+    result.device = requireString(
+        exoskeleton,
+        "device",
+        exoskeleton_context);
+    if (result.device.empty())
+    {
+        throwConfigError(
+            exoskeleton_context + ".device",
+            "must not be empty");
+    }
+
+    const auto baudrate = requireUnsigned(
+        exoskeleton,
+        "baudrate",
+        exoskeleton_context);
+    if (baudrate == 0 || baudrate > std::numeric_limits<std::uint32_t>::max())
+    {
+        throwConfigError(
+            exoskeleton_context + ".baudrate",
+            "must fit in a positive uint32_t");
+    }
+    result.baudrate = static_cast<std::uint32_t>(baudrate);
+    result.stale_timeout = requireMilliseconds(
+        exoskeleton,
+        "stale_timeout_ms",
+        exoskeleton_context);
+    result.reconnect_interval = requireMilliseconds(
+        exoskeleton,
+        "reconnect_interval_ms",
+        exoskeleton_context);
+    return result;
+}
+
+Exoskeleton::Exoskeleton(ExoskeletonConfig config)
+    : config_(std::move(config)),
+      transport_(config_.device, config_.baudrate)
+{
+    if (config_.device.empty())
+    {
+        throw std::invalid_argument("Exoskeleton serial device must not be empty");
+    }
+    if (config_.baudrate == 0)
+    {
+        throw std::invalid_argument("Exoskeleton baudrate must be positive");
+    }
+    if (config_.stale_timeout <= std::chrono::milliseconds::zero())
+    {
+        throw std::invalid_argument("Exoskeleton stale timeout must be positive");
+    }
+    if (config_.reconnect_interval <= std::chrono::milliseconds::zero())
+    {
+        throw std::invalid_argument(
+            "Exoskeleton reconnect interval must be positive");
+    }
+}
+
+Exoskeleton::~Exoskeleton()
+{
+    stop();
+}
+
+void Exoskeleton::start()
+{
+    std::lock_guard<std::mutex> lock(lifecycle_mutex_);
+    if (running_.load())
+    {
+        return;
+    }
+
+    decoder_.reset();
+    connected_.store(false);
+    {
+        std::lock_guard<std::mutex> state_lock(state_mutex_);
+        latest_state_.reset();
+    }
+    {
+        std::lock_guard<std::mutex> statistics_lock(statistics_mutex_);
+        statistics_ = ExoskeletonStatistics{};
+    }
+
+    running_.store(true);
+    reader_thread_ = std::thread(&Exoskeleton::run, this);
+}
+
+void Exoskeleton::stop() noexcept
+{
+    std::thread thread;
+    {
+        std::lock_guard<std::mutex> lock(lifecycle_mutex_);
+        if (!running_.load() && !reader_thread_.joinable())
+        {
+            connected_.store(false);
+            transport_.close();
+            return;
+        }
+        running_.store(false);
+        thread = std::move(reader_thread_);
+    }
+
+    connected_.store(false);
+    // poll/read 都受 SerialTransport 内部 mutex 保护；close 会在当前
+    // 一次有限 poll 返回后取得该锁，从而唤醒退出路径。
+    transport_.close();
+    wait_condition_.notify_all();
+    if (thread.joinable())
+    {
+        thread.join();
+    }
+}
+
+bool Exoskeleton::connected() const noexcept
+{
+    return connected_.load();
+}
+
+std::optional<ExoskeletonState> Exoskeleton::latestState() const
+{
+    std::lock_guard<std::mutex> lock(state_mutex_);
+    return latest_state_;
+}
+
+bool Exoskeleton::stateFresh() const
+{
+    if (!connected_.load())
+    {
+        return false;
+    }
+
+    const auto state = latestState();
+    if (!state || state->timestamp == Clock::time_point{})
+    {
+        return false;
+    }
+
+    const auto age = Clock::now() - state->timestamp;
+    return age >= Clock::duration::zero() && age <= config_.stale_timeout;
+}
+
+ExoskeletonStatistics Exoskeleton::statistics() const
+{
+    std::lock_guard<std::mutex> lock(statistics_mutex_);
+    return statistics_;
+}
+
+void Exoskeleton::waitForReconnect()
+{
+    std::unique_lock<std::mutex> lock(wait_mutex_);
+    wait_condition_.wait_for(
+        lock,
+        config_.reconnect_interval,
+        [this] { return !running_.load(); });
+}
+
+void Exoskeleton::consumeBytes(
+    const std::uint8_t *data,
+    const std::size_t size)
+{
+    const auto frames = decoder_.feed(data, size);
+    const auto decoder_statistics = decoder_.statistics();
+    {
+        std::lock_guard<std::mutex> lock(statistics_mutex_);
+        statistics_.received_bytes += size;
+        statistics_.valid_frames = decoder_statistics.valid_frames;
+        statistics_.checksum_failures = decoder_statistics.checksum_failures;
+        statistics_.tail_failures = decoder_statistics.tail_failures;
+        statistics_.discarded_bytes = decoder_statistics.discarded_bytes;
+    }
+
+    for (const auto &frame : frames)
+    {
+        try
+        {
+            auto state = ExoskeletonProtocol::parse(frame);
+            state.timestamp = Clock::now();
+            std::lock_guard<std::mutex> lock(state_mutex_);
+            latest_state_ = std::move(state);
+        }
+        catch (const std::exception &)
+        {
+            // StreamDecoder 已经验证过帧格式；这里仍保留异常边界，
+            // 确保异常数据不会终止串口读取线程。
+        }
+    }
+}
+
+void Exoskeleton::run()
+{
+    constexpr auto poll_timeout = std::chrono::milliseconds{50};
+    std::array<std::uint8_t, 4096> read_buffer{};
+
+    while (running_.load())
+    {
+        if (!transport_.isOpen())
+        {
+            connected_.store(false);
+            decoder_.resetBuffer();
+            if (!transport_.open())
+            {
+                waitForReconnect();
+                continue;
+            }
+
+            decoder_.resetBuffer();
+            connected_.store(true);
+            {
+                std::lock_guard<std::mutex> lock(statistics_mutex_);
+                ++statistics_.reconnect_count;
+            }
+        }
+
+        const auto poll_result = transport_.poll(poll_timeout);
+        if (!running_.load())
+        {
+            break;
+        }
+        if (poll_result.status == TransportStatus::Timeout)
+        {
+            continue;
+        }
+        if (poll_result.status != TransportStatus::Ready)
+        {
+            connected_.store(false);
+            transport_.close();
+            decoder_.resetBuffer();
+            waitForReconnect();
+            continue;
+        }
+
+        const auto read_result = transport_.read(
+            read_buffer.data(),
+            read_buffer.size());
+        if (read_result.status == TransportStatus::Ready &&
+            read_result.bytes_read > 0)
+        {
+            consumeBytes(read_buffer.data(), read_result.bytes_read);
+            continue;
+        }
+        if (read_result.status == TransportStatus::Timeout)
+        {
+            continue;
+        }
+
+        connected_.store(false);
+        transport_.close();
+        decoder_.resetBuffer();
+        waitForReconnect();
+    }
+
+    transport_.close();
+    connected_.store(false);
+}
+
+} // namespace robot::input::exoskeleton

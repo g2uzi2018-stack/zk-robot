@@ -27,6 +27,7 @@ add_executable(robot
 )
 
 add_subdirectory(src/motion)
+add_subdirectory(src/input)
 add_subdirectory(src/tiago)
 add_subdirectory(src/ti5)
 add_subdirectory(tools)

@@ -92,7 +92,7 @@ namespace robot::tiago
         }
 
         // Servo latest target wins。
-        mailbox.servo_target = ArmTarget{positions, velocity_limits};
+        mailbox.servo_target = ArmServoCommand{ArmTarget{positions, velocity_limits}, Clock::now()};
     }
 
     void RobotControlExecutor::setRightArmServoTarget(const Arm::JointValues &positions, const Arm::JointValues &velocity_limits)
@@ -107,7 +107,7 @@ namespace robot::tiago
         {
             throw std::logic_error("Right arm has pending trajectory");
         }
-        mailbox.servo_target = ArmTarget{positions, velocity_limits};
+        mailbox.servo_target = ArmServoCommand{ArmTarget{positions, velocity_limits}, Clock::now()};
     }
 
     // ============================================================
@@ -481,7 +481,16 @@ namespace robot::tiago
             {
                 if (left_arm_runtime_.servo_target)
                 {
-                    left_arm_.setTarget(left_arm_runtime_.servo_target->positions, left_arm_runtime_.servo_target->velocity_limits);
+                    if (now - left_arm_runtime_.servo_target->timestamp > config_.command_timeout)
+                    {
+                        robot::common::logger()->warn("Left arm servo command timeout, holding current position");
+                        applyLeftArmHold();
+                    }
+                    else
+                    {
+                        left_arm_.setTarget(left_arm_runtime_.servo_target->target.positions,
+                                            left_arm_runtime_.servo_target->target.velocity_limits);
+                    }
                 }
             }
         }
@@ -511,7 +520,16 @@ namespace robot::tiago
             {
                 if (right_arm_runtime_.servo_target)
                 {
-                    right_arm_.setTarget(right_arm_runtime_.servo_target->positions, right_arm_runtime_.servo_target->velocity_limits);
+                    if (now - right_arm_runtime_.servo_target->timestamp > config_.command_timeout)
+                    {
+                        robot::common::logger()->warn("Right arm servo command timeout, holding current position");
+                        applyRightArmHold();
+                    }
+                    else
+                    {
+                        right_arm_.setTarget(right_arm_runtime_.servo_target->target.positions,
+                                             right_arm_runtime_.servo_target->target.velocity_limits);
+                    }
                 }
             }
         }

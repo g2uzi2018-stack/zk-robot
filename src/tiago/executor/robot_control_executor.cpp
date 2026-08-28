@@ -11,6 +11,10 @@ namespace robot::tiago
         : left_arm_(left_arm), right_arm_(right_arm), left_gripper_(left_gripper), right_gripper_(right_gripper), head_(head), torso_(torso), base_(base),
           config_(config)
     {
+        if (config_.command_timeout <= Duration::zero())
+        {
+            throw std::invalid_argument("Executor command_timeout must be positive");
+        }
     }
 
     RobotControlExecutor::~RobotControlExecutor()

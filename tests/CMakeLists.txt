@@ -38,6 +38,40 @@ target_link_libraries(ti5_arm_test PRIVATE
 
 add_test(NAME ti5_arm COMMAND ti5_arm_test)
 
+add_executable(tiago_executor_test
+    tiago_executor_test.cpp
+    ${CMAKE_SOURCE_DIR}/src/tiago/can/can_protocol.cpp
+    ${CMAKE_SOURCE_DIR}/src/tiago/can/encoder_conversion.cpp
+    ${CMAKE_SOURCE_DIR}/src/tiago/can/can_bus.cpp
+    ${CMAKE_SOURCE_DIR}/src/tiago/motor/can_motor.cpp
+    ${CMAKE_SOURCE_DIR}/src/tiago/joint/joint.cpp
+    ${CMAKE_SOURCE_DIR}/src/tiago/arm/arm.cpp
+    ${CMAKE_SOURCE_DIR}/src/tiago/gripper/gripper.cpp
+    ${CMAKE_SOURCE_DIR}/src/tiago/head/head.cpp
+    ${CMAKE_SOURCE_DIR}/src/tiago/torso/torso.cpp
+    ${CMAKE_SOURCE_DIR}/src/tiago/base/base.cpp
+    ${CMAKE_SOURCE_DIR}/src/tiago/controller/arm_controller.cpp
+    ${CMAKE_SOURCE_DIR}/src/tiago/controller/gripper_controller.cpp
+    ${CMAKE_SOURCE_DIR}/src/tiago/controller/head_controller.cpp
+    ${CMAKE_SOURCE_DIR}/src/tiago/controller/torso_controller.cpp
+    ${CMAKE_SOURCE_DIR}/src/tiago/controller/base_controller.cpp
+    ${CMAKE_SOURCE_DIR}/src/tiago/executor/robot_control_executor.cpp
+    ${CMAKE_SOURCE_DIR}/src/tiago/executor/robot_control_executor_arm.cpp
+    ${CMAKE_SOURCE_DIR}/src/tiago/executor/robot_control_executor_components.cpp
+)
+
+target_include_directories(tiago_executor_test PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+)
+
+target_link_libraries(tiago_executor_test PRIVATE
+    robot_can
+    spdlog::spdlog
+    fmt::fmt
+)
+
+add_test(NAME tiago_executor COMMAND tiago_executor_test)
+
 add_executable(ti5_head_test
     ti5_head_test.cpp
 )

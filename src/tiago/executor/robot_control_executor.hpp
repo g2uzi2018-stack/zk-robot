@@ -34,8 +34,10 @@ namespace robot::tiago
 
             // 连续命令超时。
             //
-            // 后续主要用于：
+            // 当前用于：
             // - Arm Servo
+            //
+            // 后续用于：
             // - Base velocity
             Duration command_timeout;
         };
@@ -244,6 +246,16 @@ namespace robot::tiago
             Arm::JointValues velocity_limits{};
         };
 
+        // 一条 Servo 命令必须把目标和提交时间作为一个整体传递。
+        //
+        // timestamp 是上层写入 Servo mailbox 时记录的时间，
+        // 不是 Executor 消费 mailbox 的时间。
+        struct ArmServoCommand
+        {
+            ArmTarget target;
+            TimePoint timestamp{};
+        };
+
         // 外部提交的一整条 trajectory 命令。
         struct ArmTrajectoryCommand
         {
@@ -266,7 +278,7 @@ namespace robot::tiago
             ArmControlMode mode{ArmControlMode::Trajectory};
             ArmMotionState state{ArmMotionState::Inactive};
             std::optional<ActiveArmTrajectory> active_trajectory;
-            std::optional<ArmTarget> servo_target;
+            std::optional<ArmServoCommand> servo_target;
             std::optional<ArmTarget> hold_target;
         };
 
@@ -305,7 +317,7 @@ namespace robot::tiago
         {
             std::optional<ArmControlMode> mode;
             std::optional<ArmAction> action;
-            std::optional<ArmTarget> servo_target;
+            std::optional<ArmServoCommand> servo_target;
             std::optional<ArmTrajectoryCommand> trajectory;
         };
 

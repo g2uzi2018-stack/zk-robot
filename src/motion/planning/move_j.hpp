@@ -48,7 +48,7 @@ namespace robot::motion::planning
         std::array<double, N> max_position{};
         std::array<double, N> max_velocity{};
         std::array<double, N> max_acceleration{};
-        std::array<double, N> max_jerk{};
+        std::array<double, N> max_jerk{}; // 加速度的导数,描述加速度的变化趋势
     };
 
     // 非零边界状态下的持续时间搜索约束。
@@ -59,11 +59,14 @@ namespace robot::motion::planning
     //
     // search_resolution 通常取 Executor 控制周期。这样选出的 duration 具有清晰的
     // 系统时间粒度，同时保证搜索工作量有界。
+    //
+    // duration 指：整条 MoveJ 轨迹从开始到结束，总共要花多长时间
+
     struct MoveJTimingOptions
     {
         MotionDuration minimum_duration{};
         MotionDuration maximum_duration{};
-        MotionDuration search_resolution{};
+        MotionDuration search_resolution{}; // 规划阶段搜索 duration 的步长
     };
 
     // planMoveJ() 的规划结果。
@@ -84,6 +87,7 @@ namespace robot::motion::planning
     namespace detail
     {
 
+        // 约定coefficients[i] = x^i 的系数
         using Polynomial = std::vector<double>;
 
         inline void validatePositiveFinite(const double value, const char *message)
@@ -94,19 +98,18 @@ namespace robot::motion::planning
             }
         }
 
-        inline double evaluatePolynomial(const Polynomial &coefficients,
-                                         const double value)
+        inline double evaluatePolynomial(const Polynomial &coefficients, const double value)
         {
             // Horner 形式从最高次项向常数项求值，减少乘法次数和舍入误差。
             double result = 0.0;
-            for (auto coefficient = coefficients.rbegin();
-                 coefficient != coefficients.rend(); ++coefficient)
+            for (auto coefficient = coefficients.rbegin(); coefficient != coefficients.rend(); ++coefficient)
             {
                 result = result * value + *coefficient;
             }
             return result;
         }
 
+        // 对多项式求导 返回导数的多项式
         inline Polynomial derivative(const Polynomial &coefficients)
         {
             if (coefficients.size() <= 1)
@@ -123,6 +126,7 @@ namespace robot::motion::planning
             return result;
         }
 
+        // 找最多项式最大的系数的绝对值 用于计算多项式的数值尺度
         inline double polynomialScale(const Polynomial &coefficients)
         {
             double scale = 1.0;
@@ -133,6 +137,7 @@ namespace robot::motion::planning
             return scale;
         }
 
+        // 移除最高次项的系数为零(接近)的项，避免在求根时产生不必要的数值问题。
         inline void trimLeadingZeros(Polynomial &coefficients)
         {
             const double tolerance = 1e-13 * polynomialScale(coefficients);
@@ -263,6 +268,7 @@ namespace robot::motion::planning
             return roots;
         }
 
+        // 最小值、最大值、最大绝对值
         struct ValueRange
         {
             double minimum{0.0};
@@ -271,11 +277,9 @@ namespace robot::motion::planning
         };
 
         // 求一个多项式在 [0,1] 内的连续极值，而不是只检查离散采样点。
-        inline ValueRange polynomialRange(const Polynomial &coefficients,
-                                          const double physical_scale)
+        inline ValueRange polynomialRange(const Polynomial &coefficients, const double physical_scale)
         {
-            const auto consider = [physical_scale](ValueRange &range,
-                                                   const double raw_value)
+            const auto consider = [physical_scale](ValueRange &range, const double raw_value)
             {
                 const double value = raw_value * physical_scale;
                 range.minimum = std::min(range.minimum, value);
@@ -297,46 +301,112 @@ namespace robot::motion::planning
             return result;
         }
 
-        // 在归一化时间 u=t/T 中构造五次多项式。归一化后根搜索始终发生在 [0,1]，
-        // 避免直接在纳秒或很大的秒数上求根造成不必要的数值尺度问题。
-        inline Polynomial normalizedQuinticCoefficients(
-            const double start_position,
-            const double start_velocity,
-            const double start_acceleration,
-            const double goal_position,
-            const double goal_velocity,
-            const double goal_acceleration,
-            const double duration_seconds)
+        // 根据起点、终点的位置/速度/加速度和总时间 T，生成那条五次轨迹的系数。这个是比较核心的
+        //  在归一化时间 u=t/T 中构造五次多项式。归一化后根搜索始终发生在 [0,1]，
+        //  避免直接在纳秒或很大的秒数上求根造成不必要的数值尺度问题。
+        /**
+         * @param start_position 起点位置
+         * @param start_velocity 起点速度
+         * @param start_acceleration 起点加速度
+         * @param goal_position 终点位置
+         * @param goal_velocity 终点速度
+         * @param goal_acceleration 终点加速度
+         * @param duration_seconds 轨迹总时间
+         * @return 五次多项式
+         */
+        inline Polynomial normalizedQuinticCoefficients(const double start_position, const double start_velocity, const double start_acceleration, const double goal_position, const double goal_velocity, const double goal_acceleration, const double duration_seconds)
         {
+
+            // 五次多项式系数推导：
+            //
+            // 归一化时间：
+            //   u = t / T,  u ∈ [0, 1]
+            //
+            // 设关节轨迹为：
+            //   q(u) = a0 + a1*u + a2*u^2 + a3*u^3 + a4*u^4 + a5*u^5
+            //
+            // 对 u 求导：
+            //   dq/du   = a1 + 2*a2*u + 3*a3*u^2 + 4*a4*u^3 + 5*a5*u^4
+            //   d2q/du2 = 2*a2 + 6*a3*u + 12*a4*u^2 + 20*a5*u^3
+            //
+            // 因为 u = t / T，所以真实速度、加速度为：
+            //   v(t)   = dq/dt   = (1/T)   * dq/du
+            //   acc(t) = d2q/dt2 = (1/T^2) * d2q/du2
+            //
+            // 已知 6 个边界条件：
+            //   q(0)   = start_position
+            //   v(0)   = start_velocity
+            //   acc(0) = start_acceleration
+            //
+            //   q(1)   = goal_position
+            //   v(1)   = goal_velocity
+            //   acc(1) = goal_acceleration
+            //
+            // 代入起点 u = 0：
+            //   a0 = start_position
+            //   a1 = start_velocity * T
+            //   a2 = 0.5 * start_acceleration * T^2
+            //
+            // 再将 u = 1 代入终点的三个边界条件，得到关于 a3、a4、a5 的
+            // 三元一次方程组，联立求解后得到：
+            //
+            //   a3 = 10*Δq
+            //        - (6*v0 + 4*v1)*T
+            //        - (1.5*acc0 - 0.5*acc1)*T^2
+            //
+            //   a4 = -15*Δq
+            //        + (8*v0 + 7*v1)*T
+            //        + (1.5*acc0 - acc1)*T^2
+            //
+            //   a5 = 6*Δq
+            //        - 3*(v0 + v1)*T
+            //        - 0.5*(acc0 - acc1)*T^2
+            //
+            // 其中：
+            //   Δq   = goal_position - start_position
+            //   v0   = start_velocity
+            //   v1   = goal_velocity
+            //   acc0 = start_acceleration
+            //   acc1 = goal_acceleration
+            //
+            // 因此，6 个边界条件唯一确定五次多项式的 6 个系数 a0 ~ a5。
+
+            // 轨迹总时间
             const double T = duration_seconds;
             const double T2 = T * T;
+
+            // 关节总位移
             const double displacement = goal_position - start_position;
 
-            return Polynomial{
-                start_position,
-                start_velocity * T,
-                0.5 * start_acceleration * T2,
-                10.0 * displacement -
-                    (6.0 * start_velocity + 4.0 * goal_velocity) * T -
-                    (1.5 * start_acceleration - 0.5 * goal_acceleration) * T2,
-                -15.0 * displacement +
-                    (8.0 * start_velocity + 7.0 * goal_velocity) * T +
-                    (1.5 * start_acceleration - goal_acceleration) * T2,
-                6.0 * displacement -
-                    3.0 * (start_velocity + goal_velocity) * T -
-                    0.5 * (start_acceleration - goal_acceleration) * T2};
+            // 五次多项式：
+            // q(u) = a0 + a1*u + a2*u^2 + a3*u^3 + a4*u^4 + a5*u^5
+            // 其中归一化时间 u = t / T，u ∈ [0, 1]
+
+            // 起点的位置、速度、加速度条件直接确定前三个系数
+            const double a0 = start_position;
+            const double a1 = start_velocity * T;
+            const double a2 = 0.5 * start_acceleration * T2;
+
+            // 剩余三个系数由终点的位置、速度、加速度条件联立求解得到
+            const double a3 = 10.0 * displacement - (6.0 * start_velocity + 4.0 * goal_velocity) * T - (1.5 * start_acceleration - 0.5 * goal_acceleration) * T2;
+
+            const double a4 = -15.0 * displacement + (8.0 * start_velocity + 7.0 * goal_velocity) * T + (1.5 * start_acceleration - goal_acceleration) * T2;
+
+            const double a5 = 6.0 * displacement - 3.0 * (start_velocity + goal_velocity) * T - 0.5 * (start_acceleration - goal_acceleration) * T2;
+
+            return Polynomial{a0, a1, a2, a3, a4, a5};
         }
 
+        // 判断某个值有没有超过限制，同时留一点浮点误差余量
         inline bool withinLimit(const double value, const double limit)
         {
             const double tolerance = 1e-9 * std::max(1.0, std::abs(limit));
             return value <= limit + tolerance;
         }
 
+        // 检查 MoveJ 输入是否合法，比如位置、速度、加速度、各种限制; 尽管输入的机械臂状态大概率合法,但是实际上目标状态可能不合法,所以需要检查
         template <std::size_t N>
-        void validateRequest(const JointBoundaryState<N> &start,
-                             const JointBoundaryState<N> &goal,
-                             const JointMotionLimits<N> &limits)
+        void validateRequest(const JointBoundaryState<N> &start, const JointBoundaryState<N> &goal, const JointMotionLimits<N> &limits)
         {
             static_assert(N > 0, "MoveJ requires at least one joint");
 
@@ -402,6 +472,7 @@ namespace robot::motion::planning
             }
         }
 
+        // 检查 minimum_duration / maximum_duration / search_resolution 最大最小搜索步长是否合理
         inline void validateTiming(const MoveJTimingOptions &timing)
         {
             if (timing.minimum_duration <= MotionDuration::zero() ||
@@ -430,6 +501,7 @@ namespace robot::motion::planning
             }
         }
 
+        // 真正检查整条轨迹有没有超过位置、速度、加速度、jerk 限制。这个也是核心
         template <std::size_t N>
         bool trajectorySatisfiesLimits(const JointBoundaryState<N> &start,
                                        const JointBoundaryState<N> &goal,
@@ -486,6 +558,7 @@ namespace robot::motion::planning
             return true;
         }
 
+        // 创建真正的 五次关节轨迹，再包装成 PlannedJointMotion
         template <std::size_t N>
         PlannedJointMotion<N> makePlan(const JointBoundaryState<N> &start,
                                        const JointBoundaryState<N> &goal,
@@ -506,6 +579,7 @@ namespace robot::motion::planning
             return result;
         }
 
+        // 浮点秒数安全地转成 MotionDuration，并向上取，避免时间被舍短
         inline MotionDuration ceilDuration(const double seconds)
         {
             if (!std::isfinite(seconds) || seconds <= 0.0)

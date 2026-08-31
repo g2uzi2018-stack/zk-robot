@@ -781,7 +781,7 @@ CAN 位置只是电机/输出编码器坐标，不自动等于 URDF 关节角：
 
 ```text
 # 当前定制工程
-/home/kuang/workspace/zk_robot/main.cpp
+/home/kuang/workspace/zk_robot/tools/ti5_full_check.cpp
 /home/kuang/workspace/zk_robot/src/ti5/can/
 /home/kuang/workspace/zk_robot/config/ti5/t170c/
 /home/ti5robot/Desktop/ti5_zhilai_ws/src/ti5_controller/config/ti5_follow_config.yaml

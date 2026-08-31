@@ -122,12 +122,3 @@ target_link_libraries(ti5_controller PUBLIC
     ti5_head
     ti5_hand
 )
-
-target_compile_definitions(robot PRIVATE
-    TI5_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
-)
-
-target_link_libraries(robot PRIVATE
-    ti5_controller
-    ti5_config
-)

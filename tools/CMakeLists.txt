@@ -56,6 +56,21 @@ target_compile_definitions(ti5_hand_check PRIVATE
     TI5_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
 )
 
+add_executable(ti5_full_check EXCLUDE_FROM_ALL
+    ti5_full_check.cpp
+)
+
+target_link_libraries(ti5_full_check PRIVATE
+    ti5_controller
+    ti5_config
+    spdlog::spdlog
+    fmt::fmt
+)
+
+target_compile_definitions(ti5_full_check PRIVATE
+    TI5_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+)
+
 add_executable(exoskeleton_monitor
     exoskeleton_monitor.cpp
 )

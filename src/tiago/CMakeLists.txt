@@ -1,4 +1,4 @@
-target_sources(robot PRIVATE
+add_library(tiago_components STATIC
     can/can_config.cpp
     can/can_protocol.cpp
     can/encoder_conversion.cpp
@@ -24,4 +24,16 @@ target_sources(robot PRIVATE
     executor/robot_control_executor.cpp
     executor/robot_control_executor_arm.cpp
     executor/robot_control_executor_components.cpp
+)
+
+target_include_directories(tiago_components PUBLIC
+    ${CMAKE_SOURCE_DIR}/src
+)
+
+target_link_libraries(tiago_components PUBLIC
+    robot_can
+    robot_motion
+    yaml-cpp
+    spdlog::spdlog
+    fmt::fmt
 )

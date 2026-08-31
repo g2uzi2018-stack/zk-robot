@@ -22,28 +22,29 @@ target_include_directories(robot_can PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 
-add_executable(robot
-    main.cpp
-)
-
 add_subdirectory(src/motion)
 add_subdirectory(src/input)
 add_subdirectory(src/tiago)
 add_subdirectory(src/ti5)
 add_subdirectory(tools)
 
-if(BUILD_TESTING)
-    add_subdirectory(tests)
-endif()
+add_executable(robot
+    main.cpp
+)
 
 target_include_directories(robot PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 
-target_link_libraries(robot PRIVATE
-    robot_can
-    robot_motion
-    yaml-cpp
-    spdlog::spdlog
-    fmt::fmt
+target_compile_definitions(robot PRIVATE
+    TI5_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
 )
+
+target_link_libraries(robot PRIVATE
+    ti5_config
+    ti5_hand_transport
+)
+
+if(BUILD_TESTING)
+    add_subdirectory(tests)
+endif()

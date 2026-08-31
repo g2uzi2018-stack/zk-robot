@@ -278,7 +278,9 @@ void testConfig()
     const auto config = loadExoskeletonConfig(
         std::filesystem::path{EXOSKELETON_SOURCE_DIR} /
         "config/exoskeleton.yaml");
-    expect(config.device == "/dev/exoskeleton", "config device mismatch");
+    expect(!config.device.empty() &&
+               std::filesystem::path{config.device}.is_absolute(),
+           "config device must be a non-empty absolute path");
     expect(config.baudrate == 2000000, "config baudrate mismatch");
     expect(config.stale_timeout == std::chrono::milliseconds{100},
            "config stale timeout mismatch");

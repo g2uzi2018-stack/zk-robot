@@ -228,11 +228,8 @@ namespace robot::motion
         }
 
     private:
-        // 一个关节对应 a0 ~ a5 六个五次多项式系数。
-        using Coefficients = std::array<double, 6>;
-
         // N 个关节分别保存归一化时间 u=t/T 下的五次多项式系数。
-        std::array<Coefficients, N> coefficients_{};
+        std::array<QuinticCoefficients, N> coefficients_{};
 
         // 对外保持 steady_clock::duration，与 JointTrajectory 接口一致。
         Duration duration_{};

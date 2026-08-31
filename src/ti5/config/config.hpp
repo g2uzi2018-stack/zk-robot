@@ -157,15 +157,6 @@ struct ExclusiveControlConfig
     bool reject_second_controller{false};
 };
 
-// 只描述“哪一块物理 USB-CAN 适配器属于本体”，不描述 waist/head/arm 对应哪个 canX。
-struct CanAdapterSelectorConfig
-{
-    // 支持：usb_serial_short、usb_serial、id_path、sysfs_parent、device_path。
-    std::string selector;
-    std::string value;
-    std::size_t expected_channels{0};
-};
-
 struct SocketCanConfig
 {
     std::uint32_t bitrate{0};
@@ -176,7 +167,6 @@ struct SocketCanConfig
     std::chrono::milliseconds restart_ms{0};
     std::chrono::milliseconds reconfigure_wait{100};
     std::chrono::milliseconds startup_wait{100};
-    CanAdapterSelectorConfig body_adapter;
 };
 
 struct CanConfig

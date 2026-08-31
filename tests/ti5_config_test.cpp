@@ -43,8 +43,8 @@ int main()
         expect(robot.can_buses.size() == 4,
                "T170C must contain four body logical buses");
         expect(can.socketcan.bitrate == 1000000 &&
-                   can.socketcan.body_adapter.expected_channels == 4,
-               "SocketCAN adapter config mismatch");
+                   can.socketcan.interface_regex == "^can[0-9]+$",
+               "SocketCAN interface config mismatch");
         expect(can.discovery.enabled && !can.discovery.cache_mapping &&
                    can.discovery.strategy == "expected_node_ids" &&
                    !can.discovery.discover_hands,

@@ -538,13 +538,6 @@ std::vector<std::string> prepareBodyInterfaces(
         throw std::runtime_error("没有找到 SocketCAN 接口");
     }
 
-    const auto &selector = can_config.socketcan.body_adapter;
-    const auto selected = manager.selectAdapter(
-        all_interfaces,
-        robot::can::CanAdapterSelector{
-            selector.selector,
-            selector.value,
-            selector.expected_channels});
 
     const robot::can::CanInterfaceSettings settings{
         can_config.socketcan.bitrate,
@@ -554,8 +547,8 @@ std::vector<std::string> prepareBodyInterfaces(
         can_config.socketcan.validate_bitrate};
 
     std::vector<std::string> result;
-    result.reserve(selected.size());
-    for (const auto &interface : selected)
+    result.reserve(all_interfaces.size());
+    for (const auto &interface : all_interfaces)
     {
         robot::can::CanInterfaceInfo ready;
         if (options.bring_up)

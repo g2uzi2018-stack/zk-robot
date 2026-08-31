@@ -503,10 +503,7 @@ namespace robot::motion::planning
 
         // 真正检查整条轨迹有没有超过位置、速度、加速度、jerk 限制。这个也是核心
         template <std::size_t N>
-        bool trajectorySatisfiesLimits(const JointBoundaryState<N> &start,
-                                       const JointBoundaryState<N> &goal,
-                                       const JointMotionLimits<N> &limits,
-                                       const MotionDuration duration)
+        bool trajectorySatisfiesLimits(const JointBoundaryState<N> &start, const JointBoundaryState<N> &goal, const JointMotionLimits<N> &limits, const MotionDuration duration)
         {
             const double T = std::chrono::duration<double>(duration).count();
             if (!std::isfinite(T) || T <= 0.0)

@@ -626,26 +626,53 @@ namespace robot::motion::planning
     // maximum_duration 检查候选，并返回第一个满足连续位置、速度、加速度和 jerk
     // 约束的五次轨迹，即该时间分辨率下的最短可行结果。
     template <std::size_t N>
-    PlannedJointMotion<N> planMoveJ(const JointBoundaryState<N> &start, const JointBoundaryState<N> &goal, const JointMotionLimits<N> &limits, const MoveJTimingOptions &timing, MoveJDiagnostics *diagnostics = nullptr)
+    PlannedJointMotion<N> planMoveJ(
+        const JointBoundaryState<N> &start,
+        const JointBoundaryState<N> &goal,
+        const JointMotionLimits<N> &limits,
+        const MoveJTimingOptions &timing,
+        MoveJDiagnostics *diagnostics = nullptr)
     {
+        // 只有调用者需要诊断数据时才记录规划开始时间
+        MotionClock::time_point planning_begin{};
+        if (diagnostics)
+        {
+            planning_begin = MotionClock::now();
+            *diagnostics = {};
+            diagnostics->search_resolution = timing.search_resolution;
+        }
 
-        const auto planning_begin = MotionClock::now();
+        // 检查输入和时间搜索参数
+        detail::validateRequest(start, goal, limits);
+        detail::validateTiming(timing);
 
         std::size_t attempts = 0;
 
-        // 检查输入
-        detail::validateRequest(start, goal, limits);
-        // 检查时间搜索参数
-        detail::validateTiming(timing);
-
-        // 从 minimum_duration 开始尝试 T
+        // 从 minimum_duration 开始搜索候选总时间 T
         MotionDuration candidate = timing.minimum_duration;
+
         while (true)
         {
+            // 每检查一个候选 T，记为一次尝试
+            ++attempts;
+
             if (detail::trajectorySatisfiesLimits(
                     start, goal, limits, candidate))
             {
-                return detail::makePlan(start, goal, limits, candidate);
+                // 成功后先保存诊断数据，再返回轨迹
+                if (diagnostics)
+                {
+                    diagnostics->search_attempts = attempts;
+                    diagnostics->selected_duration = candidate;
+
+                    diagnostics->planning_time_us =
+                        std::chrono::duration<double, std::micro>(
+                            MotionClock::now() - planning_begin)
+                            .count();
+                }
+
+                return detail::makePlan(
+                    start, goal, limits, candidate);
             }
 
             if (candidate == timing.maximum_duration)
@@ -655,24 +682,26 @@ namespace robot::motion::planning
 
             const MotionDuration remaining =
                 timing.maximum_duration - candidate;
-            candidate += remaining <= timing.search_resolution
-                             ? remaining
-                             : timing.search_resolution;
-            ++attempts;
+
+            candidate +=
+                remaining <= timing.search_resolution
+                    ? remaining
+                    : timing.search_resolution;
         }
 
-        throw std::runtime_error("MoveJ has no feasible quintic trajectory in the requested time range");
+        // 搜索失败也保留诊断信息
         if (diagnostics)
         {
             diagnostics->search_attempts = attempts;
-            diagnostics->selected_duration = candidate;
-            diagnostics->search_resolution = timing.search_resolution;
 
             diagnostics->planning_time_us =
                 std::chrono::duration<double, std::micro>(
                     MotionClock::now() - planning_begin)
                     .count();
         }
+
+        throw std::runtime_error(
+            "MoveJ has no feasible quintic trajectory in the requested time range");
     }
 
     // 静止到静止的便利入口。

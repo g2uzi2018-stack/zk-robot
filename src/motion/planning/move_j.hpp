@@ -511,20 +511,26 @@ namespace robot::motion::planning
                 return false;
             }
 
+            // 倒数
             const double inverse_T = 1.0 / T;
             const double inverse_T2 = inverse_T * inverse_T;
             const double inverse_T3 = inverse_T2 * inverse_T;
 
             for (std::size_t joint = 0; joint < N; ++joint)
             {
-                const Polynomial position = normalizedQuinticCoefficients(
-                    start.position[joint], start.velocity[joint],
-                    start.acceleration[joint], goal.position[joint],
-                    goal.velocity[joint], goal.acceleration[joint], T);
+                // 根据 start / goal / T 生成 position 五次多项式
+                const Polynomial position = normalizedQuinticCoefficients(start.position[joint], start.velocity[joint],
+                                                                          start.acceleration[joint], goal.position[joint],
+                                                                          goal.velocity[joint], goal.acceleration[joint], T);
+
+                /**
+                 * 连续求导得到 velocity / acceleration / jerk
+                 * */
                 const Polynomial velocity = derivative(position);
                 const Polynomial acceleration = derivative(velocity);
                 const Polynomial jerk = derivative(acceleration);
 
+                // 求它们在整段 u∈[0,1] 里的最大最小值
                 const ValueRange position_range =
                     polynomialRange(position, 1.0);
                 const ValueRange velocity_range =
@@ -537,6 +543,7 @@ namespace robot::motion::planning
                 const double position_tolerance = 1e-9 * std::max(
                                                              {1.0, std::abs(limits.min_position[joint]),
                                                               std::abs(limits.max_position[joint])});
+                // 和 joint limits 比较
                 if (position_range.minimum <
                         limits.min_position[joint] - position_tolerance ||
                     position_range.maximum >
@@ -610,15 +617,14 @@ namespace robot::motion::planning
     // maximum_duration 检查候选，并返回第一个满足连续位置、速度、加速度和 jerk
     // 约束的五次轨迹，即该时间分辨率下的最短可行结果。
     template <std::size_t N>
-    PlannedJointMotion<N> planMoveJ(
-        const JointBoundaryState<N> &start,
-        const JointBoundaryState<N> &goal,
-        const JointMotionLimits<N> &limits,
-        const MoveJTimingOptions &timing)
+    PlannedJointMotion<N> planMoveJ(const JointBoundaryState<N> &start, const JointBoundaryState<N> &goal, const JointMotionLimits<N> &limits, const MoveJTimingOptions &timing)
     {
+        // 检查输入
         detail::validateRequest(start, goal, limits);
+        // 检查时间搜索参数
         detail::validateTiming(timing);
 
+        // 从 minimum_duration 开始尝试 T
         MotionDuration candidate = timing.minimum_duration;
         while (true)
         {
@@ -640,8 +646,7 @@ namespace robot::motion::planning
                              : timing.search_resolution;
         }
 
-        throw std::runtime_error(
-            "MoveJ has no feasible quintic trajectory in the requested time range");
+        throw std::runtime_error("MoveJ has no feasible quintic trajectory in the requested time range");
     }
 
     // 静止到静止的便利入口。

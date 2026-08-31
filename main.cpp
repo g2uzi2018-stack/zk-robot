@@ -1,87 +1,171 @@
-#include "ti5/config/config_loader.hpp"
-#include "ti5/hand/hand_config.hpp"
+#include "motion/planning/move_j.hpp"
 
-#include <cstdlib>
-#include <filesystem>
+#include <array>
+#include <chrono>
+#include <iomanip>
 #include <iostream>
-#include <stdexcept>
-#include <string>
 
-namespace
+int main()
 {
+    using namespace robot::motion::planning;
 
-std::filesystem::path defaultConfigRoot()
-{
-#ifdef TI5_SOURCE_DIR
-    return std::filesystem::path{TI5_SOURCE_DIR} /
-           "config" / "ti5" / "t170c";
-#else
-    return std::filesystem::path{"config"} / "ti5" / "t170c";
-#endif
-}
+    constexpr std::size_t N = 2;
 
-void printUsage(const char *program)
-{
-    std::cout
-        << "用法：\n"
-        << "  " << program << " [--config-root 配置目录]\n\n"
-        << "默认只加载并检查 TI5 配置，不打开 CAN，也不会让机器人运动。\n";
-}
+    // =========================================================
+    // 1. 起点 / 终点
+    // =========================================================
 
-std::filesystem::path parseConfigRoot(const int argc, char **argv)
-{
-    if (argc == 1)
-    {
-        return defaultConfigRoot();
-    }
-    if (argc == 2 &&
-        (std::string{argv[1]} == "--help" ||
-         std::string{argv[1]} == "-h"))
-    {
-        printUsage(argv[0]);
-        std::exit(0);
-    }
-    if (argc == 3 && std::string{argv[1]} == "--config-root")
-    {
-        return std::filesystem::path{argv[2]};
-    }
-    throw std::invalid_argument("参数错误，请使用 --help 查看用法");
-}
+    JointBoundaryState<N> start;
+    start.position = {0.0, 0.0};
+    start.velocity = {0.0, 0.0};
+    start.acceleration = {0.0, 0.0};
 
-} // namespace
+    JointBoundaryState<N> goal;
+    goal.position = {1.0, -0.8};
+    goal.velocity = {0.0, 0.0};
+    goal.acceleration = {0.0, 0.0};
 
-int main(const int argc, char **argv)
-{
+    // =========================================================
+    // 2. 关节限制
+    // =========================================================
+
+    JointMotionLimits<N> limits;
+
+    limits.min_position = {-2.0, -2.0};
+    limits.max_position = {2.0, 2.0};
+
+    limits.max_velocity = {
+        1.0,
+        1.0};
+
+    limits.max_acceleration = {
+        2.0,
+        2.0};
+
+    limits.max_jerk = {
+        10.0,
+        10.0};
+
+    // =========================================================
+    // 3. MoveJ 时间搜索参数
+    // =========================================================
+
+    MoveJTimingOptions timing;
+
+    timing.minimum_duration = std::chrono::milliseconds{500};
+    timing.maximum_duration = std::chrono::seconds{5};
+    timing.search_resolution = std::chrono::milliseconds{50};
+
+    // =========================================================
+    // 4. 调用完整版本 planMoveJ()
+    // =========================================================
+
+    MoveJDiagnostics diagnostics;
+
     try
     {
-        const auto config_root = parseConfigRoot(argc, argv);
-        const auto robot = robot::ti5::loadRobotConfig(
-            config_root / "robot.yaml");
-        const auto can = robot::ti5::loadCanConfig(
-            config_root / "can.yaml");
-        const auto safety = robot::ti5::loadJointSafetyConfig(
-            config_root / "safety.yaml");
-        const auto kinematics = robot::ti5::loadKinematicsConfig(
-            config_root / "kinematics.yaml");
-        const auto hands = robot::ti5::hand::loadHandConfig(
-            config_root / "hands.yaml");
+        const auto plan = planMoveJ(
+            start,
+            goal,
+            limits,
+            timing,
+            &diagnostics);
+
+        // =====================================================
+        // 5. 打印规划结果
+        // =====================================================
+
+        const auto total_duration = plan.trajectory->duration();
+
+        const double total_seconds =
+            std::chrono::duration<double>(total_duration).count();
+
+        std::cout << std::fixed << std::setprecision(6);
+
+        std::cout << "====================================\n";
+        std::cout << "MoveJ planning test\n";
+        std::cout << "====================================\n";
 
         std::cout
-            << "zk_robot main smoke test 通过\n"
-            << "  robot: " << robot.vendor << " " << robot.model << "\n"
-            << "  body motors: " << robot.body_motor_count << "\n"
-            << "  CAN buses: " << robot.can_buses.size() << "\n"
-            << "  safety limits: " << safety.position_limits.size() << "\n"
-            << "  kinematics models: " << kinematics.models.size() << "\n"
-            << "  CAN bitrate: " << can.socketcan.bitrate << "\n"
-            << "  hands: " << hands.left.name << ", "
-            << hands.right.name << "\n";
-        return 0;
+            << "Search attempts   : "
+            << diagnostics.search_attempts << '\n';
+
+        std::cout
+            << "Selected duration : "
+            << std::chrono::duration<double>(
+                   diagnostics.selected_duration)
+                   .count()
+            << " s\n";
+
+        std::cout
+            << "Search resolution : "
+            << std::chrono::duration<double>(
+                   diagnostics.search_resolution)
+                   .count()
+            << " s\n";
+
+        std::cout
+            << "Planning time     : "
+            << diagnostics.planning_time_us
+            << " us\n";
+
+        // =====================================================
+        // 6. 对规划结果进行多次 sample
+        // =====================================================
+
+        const std::array<int, 5> percentages{
+            0, 25, 50, 75, 100};
+
+        for (const int percent : percentages)
+        {
+            const auto elapsed =
+                total_duration * percent / 100;
+
+            const auto point =
+                plan.trajectory->sample(elapsed);
+
+            std::cout
+                << "\n[" << percent << "%]"
+                << "  t="
+                << total_seconds *
+                       static_cast<double>(percent) / 100.0
+                << " s\n";
+
+            for (std::size_t joint = 0;
+                 joint < N;
+                 ++joint)
+            {
+                std::cout
+                    << "  joint " << joint
+                    << ": position="
+                    << point.position[joint]
+                    << ", velocity="
+                    << point.velocity[joint]
+                    << ", acceleration="
+                    << point.acceleration[joint]
+                    << '\n';
+            }
+
+            std::cout
+                << "  finished="
+                << std::boolalpha
+                << point.finished
+                << '\n';
+        }
+
+        std::cout << "\n====================================\n";
+        std::cout << "MoveJ test PASS\n";
+        std::cout << "====================================\n";
     }
     catch (const std::exception &error)
     {
-        std::cerr << "zk_robot main smoke test 失败："
-                  << error.what() << '\n';
+        std::cerr
+            << "MoveJ test FAILED: "
+            << error.what()
+            << '\n';
+
         return 1;
     }
+
+    return 0;
 }

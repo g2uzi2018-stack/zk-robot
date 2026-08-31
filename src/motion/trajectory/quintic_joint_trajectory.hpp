@@ -164,13 +164,15 @@ namespace robot::motion
         Point sample(Duration elapsed) const override
         {
             const bool finished = elapsed >= duration_;
+
+            // 真实经过时间 t，单位：秒
             double t = 0.0;
 
             if (elapsed > Duration::zero())
             {
                 if (finished)
                 {
-                    // 超过结束时间时固定在终点。
+                    // 超过轨迹结束时间后固定在终点
                     t = duration_seconds_;
                 }
                 else
@@ -179,10 +181,23 @@ namespace robot::motion
                 }
             }
 
-            const double t2 = t * t;
-            const double t3 = t2 * t;
-            const double t4 = t3 * t;
-            const double t5 = t4 * t;
+            // 归一化时间：
+            // u = t / T
+            // 整条轨迹始终对应 u ∈ [0, 1]
+            const double u = t / duration_seconds_;
+
+            const double u2 = u * u;
+            const double u3 = u2 * u;
+            const double u4 = u3 * u;
+            const double u5 = u4 * u;
+
+            // q(u) 的一阶、二阶导数是相对于 u 的导数。
+            // 换算成真实时间：
+            //
+            // velocity     = dq/du   * 1/T
+            // acceleration = d²q/du² * 1/T²
+            const double inverse_T = 1.0 / duration_seconds_;
+            const double inverse_T2 = inverse_T * inverse_T;
 
             Point point;
             point.finished = finished;
@@ -191,25 +206,21 @@ namespace robot::motion
             {
                 const auto &a = coefficients_[i];
 
-                // Position: q(t)
-                point.position[i] =
-                    a[0] + a[1] * t + a[2] * t2 + a[3] * t3 + a[4] * t4 +
-                    a[5] * t5;
+                // Position:
+                // q(u) = a0 + a1*u + a2*u² + ... + a5*u⁵
+                point.position[i] = a[0] + a[1] * u + a[2] * u2 + a[3] * u3 + a[4] * u4 + a[5] * u5;
 
-                // Velocity: dq(t) / dt
-                point.velocity[i] =
-                    a[1] + 2.0 * a[2] * t + 3.0 * a[3] * t2 +
-                    4.0 * a[4] * t3 + 5.0 * a[5] * t4;
+                // Velocity:
+                // dq/dt = dq/du * 1/T
+                point.velocity[i] = (a[1] + 2.0 * a[2] * u + 3.0 * a[3] * u2 + 4.0 * a[4] * u3 + 5.0 * a[5] * u4) * inverse_T;
 
-                // Acceleration: d²q(t) / dt²
-                point.acceleration[i] =
-                    2.0 * a[2] + 6.0 * a[3] * t + 12.0 * a[4] * t2 +
-                    20.0 * a[5] * t3;
+                // Acceleration:
+                // d²q/dt² = d²q/du² * 1/T²
+                point.acceleration[i] = (2.0 * a[2] + 6.0 * a[3] * u + 12.0 * a[4] * u2 + 20.0 * a[5] * u3) * inverse_T2;
             }
 
             return point;
         }
-
         // 返回整条轨迹持续时间。
         Duration duration() const noexcept override
         {
@@ -220,7 +231,7 @@ namespace robot::motion
         // 一个关节对应 a0 ~ a5 六个五次多项式系数。
         using Coefficients = std::array<double, 6>;
 
-        // N 个关节分别保存自己的多项式系数。
+        // N 个关节分别保存归一化时间 u=t/T 下的五次多项式系数。
         std::array<Coefficients, N> coefficients_{};
 
         // 对外保持 steady_clock::duration，与 JointTrajectory 接口一致。

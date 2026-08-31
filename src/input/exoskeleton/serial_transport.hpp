@@ -36,6 +36,7 @@ struct ReadResult
 class SerialTransport final
 {
 public:
+    explicit SerialTransport(std::uint32_t baudrate);
     SerialTransport(std::string device, std::uint32_t baudrate);
     ~SerialTransport();
 
@@ -43,6 +44,7 @@ public:
     SerialTransport &operator=(const SerialTransport &) = delete;
 
     bool open();
+    bool open(const std::string &device);
     void close() noexcept;
 
     bool isOpen() const noexcept;
@@ -60,13 +62,14 @@ public:
     }
 
     std::string lastError() const;
-    const std::string &device() const noexcept { return device_; }
+    std::string device() const;
     std::uint32_t baudrate() const noexcept { return baudrate_; }
 
 private:
+    bool openUnlocked();
     void closeUnlocked() noexcept;
 
-    const std::string device_;
+    std::string device_;
     const std::uint32_t baudrate_;
 
     mutable std::mutex mutex_;

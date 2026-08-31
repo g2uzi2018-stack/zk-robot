@@ -19,7 +19,9 @@ namespace robot::input::exoskeleton
 
 struct ExoskeletonConfig
 {
-    std::string device{"/dev/exoskeleton"};
+    std::uint16_t usb_vid{0x0483};
+    std::uint16_t usb_pid{0x5740};
+    bool match_vid_only{false};
     std::uint32_t baudrate{2000000};
     std::chrono::milliseconds stale_timeout{100};
     std::chrono::milliseconds reconnect_interval{1000};
@@ -52,6 +54,7 @@ public:
     void stop() noexcept;
 
     bool connected() const noexcept;
+    std::string device() const;
     std::optional<ExoskeletonState> latestState() const;
     bool stateFresh() const;
     ExoskeletonStatistics statistics() const;

@@ -1,6 +1,7 @@
 find_package(Threads REQUIRED)
 
 add_library(exoskeleton_input STATIC
+    serial_device_discovery.cpp
     serial_transport.cpp
     exoskeleton_protocol.cpp
     exoskeleton_stream_decoder.cpp

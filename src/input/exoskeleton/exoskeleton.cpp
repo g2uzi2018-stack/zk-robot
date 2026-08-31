@@ -1,5 +1,8 @@
 #include "input/exoskeleton/exoskeleton.hpp"
 
+#include "input/exoskeleton/serial_device_discovery.hpp"
+
+#include <charconv>
 #include <limits>
 #include <stdexcept>
 #include <utility>
@@ -101,6 +104,50 @@ std::uint64_t requireUnsigned(
     }
 }
 
+bool requireBool(
+    const YAML::Node &parent,
+    const char *key,
+    const std::string &context)
+{
+    try
+    {
+        return requireScalar(parent, key, context).as<bool>();
+    }
+    catch (const YAML::Exception &error)
+    {
+        throwConfigError(
+            context + "." + key,
+            "must be a boolean: " + std::string(error.what()));
+    }
+}
+
+std::uint16_t requireUsbId(
+    const YAML::Node &parent,
+    const char *key,
+    const std::string &context)
+{
+    const auto text = requireString(parent, key, context);
+    const bool hexadecimal =
+        text.size() > 2 && text[0] == '0' &&
+        (text[1] == 'x' || text[1] == 'X');
+    const auto digits = text.substr(hexadecimal ? 2 : 0);
+    std::uint32_t value = 0;
+    const auto parsed = std::from_chars(
+        digits.data(),
+        digits.data() + digits.size(),
+        value,
+        hexadecimal ? 16 : 10);
+    if (digits.empty() || parsed.ec != std::errc{} ||
+        parsed.ptr != digits.data() + digits.size() ||
+        value == 0 || value > std::numeric_limits<std::uint16_t>::max())
+    {
+        throwConfigError(
+            context + "." + key,
+            "must be a positive 16-bit USB id, written as decimal or 0x-prefixed hexadecimal");
+    }
+    return static_cast<std::uint16_t>(value);
+}
+
 std::chrono::milliseconds requireMilliseconds(
     const YAML::Node &parent,
     const char *key,
@@ -137,16 +184,12 @@ ExoskeletonConfig loadExoskeletonConfig(
     const auto exoskeleton_context = context + ".exoskeleton";
 
     ExoskeletonConfig result;
-    result.device = requireString(
+    result.usb_vid = requireUsbId(exoskeleton, "usb_vid", exoskeleton_context);
+    result.usb_pid = requireUsbId(exoskeleton, "usb_pid", exoskeleton_context);
+    result.match_vid_only = requireBool(
         exoskeleton,
-        "device",
+        "match_vid_only",
         exoskeleton_context);
-    if (result.device.empty())
-    {
-        throwConfigError(
-            exoskeleton_context + ".device",
-            "must not be empty");
-    }
 
     const auto baudrate = requireUnsigned(
         exoskeleton,
@@ -172,11 +215,15 @@ ExoskeletonConfig loadExoskeletonConfig(
 
 Exoskeleton::Exoskeleton(ExoskeletonConfig config)
     : config_(std::move(config)),
-      transport_(config_.device, config_.baudrate)
+      transport_(config_.baudrate)
 {
-    if (config_.device.empty())
+    if (config_.usb_vid == 0)
     {
-        throw std::invalid_argument("Exoskeleton serial device must not be empty");
+        throw std::invalid_argument("Exoskeleton USB VID must be positive");
+    }
+    if (config_.usb_pid == 0)
+    {
+        throw std::invalid_argument("Exoskeleton USB PID must be positive");
     }
     if (config_.baudrate == 0)
     {
@@ -250,6 +297,11 @@ void Exoskeleton::stop() noexcept
 bool Exoskeleton::connected() const noexcept
 {
     return connected_.load();
+}
+
+std::string Exoskeleton::device() const
+{
+    return transport_.device();
 }
 
 std::optional<ExoskeletonState> Exoskeleton::latestState() const
@@ -326,6 +378,10 @@ void Exoskeleton::run()
 {
     constexpr auto poll_timeout = std::chrono::milliseconds{50};
     std::array<std::uint8_t, 4096> read_buffer{};
+    const SerialDeviceSelector selector{
+        config_.usb_vid,
+        config_.usb_pid,
+        config_.match_vid_only};
 
     while (running_.load())
     {
@@ -333,7 +389,14 @@ void Exoskeleton::run()
         {
             connected_.store(false);
             decoder_.resetBuffer();
-            if (!transport_.open())
+            const auto devices = enumerateSerialDevices(selector);
+            if (devices.size() != 1)
+            {
+                waitForReconnect();
+                continue;
+            }
+
+            if (!transport_.open(devices.front().device_path.string()))
             {
                 waitForReconnect();
                 continue;

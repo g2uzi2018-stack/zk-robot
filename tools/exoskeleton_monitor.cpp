@@ -136,6 +136,7 @@ int main(int argc, char **argv)
 
             std::cout << std::fixed << std::setprecision(3)
                       << "\nConnected: " << yesNo(exoskeleton.connected())
+                      << "\nDevice: " << exoskeleton.device()
                       << "\nFresh: " << yesNo(exoskeleton.stateFresh())
                       << "\nFrame rate: " << frame_rate << " Hz\n"
                       << "Bytes: " << current_statistics.received_bytes
@@ -143,7 +144,11 @@ int main(int argc, char **argv)
                       << ", checksum failures: "
                       << current_statistics.checksum_failures
                       << ", tail failures: "
-                      << current_statistics.tail_failures << "\n";
+                      << current_statistics.tail_failures
+                      << ", discarded bytes: "
+                      << current_statistics.discarded_bytes
+                      << ", reconnects: "
+                      << current_statistics.reconnect_count << "\n";
 
             const auto state = exoskeleton.latestState();
             if (state)

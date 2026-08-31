@@ -1,5 +1,7 @@
 exoskeleton:
-  device: /dev/exoskeleton
+  usb_vid: 0x0483
+  usb_pid: 0x5740
+  match_vid_only: false
   baudrate: 2000000
 
   stale_timeout_ms: 100

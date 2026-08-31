@@ -1,5 +1,7 @@
 #include "tiago/joint/joint.hpp"
 
+#include <iomanip>
+#include <sstream>
 #include <stdexcept>
 
 namespace robot::tiago
@@ -41,13 +43,33 @@ namespace robot::tiago
         motor_.stop();
     }
 
+    std::optional<MotorFeedback> Joint::queryStatus()
+    {
+        return motor_.queryStatus();
+    }
+
     // 检查目标位置是否处于关节机械允许范围内。
     void Joint::validateTargetPosition(double position) const
     {
         if (position < limits_.min_position ||
             position > limits_.max_position)
         {
-            throw std::out_of_range("Target position exceeds joint limits");
+            std::ostringstream message;
+            message << std::setprecision(9)
+                    << "target=" << position
+                    << ", limits=[" << limits_.min_position
+                    << ", " << limits_.max_position << "]";
+            if (position < limits_.min_position)
+            {
+                message << ", below_min_by="
+                        << (limits_.min_position - position);
+            }
+            else
+            {
+                message << ", above_max_by="
+                        << (position - limits_.max_position);
+            }
+            throw std::out_of_range(message.str());
         }
     }
 

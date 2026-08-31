@@ -278,9 +278,9 @@ void testConfig()
     const auto config = loadExoskeletonConfig(
         std::filesystem::path{EXOSKELETON_SOURCE_DIR} /
         "config/exoskeleton.yaml");
-    expect(!config.device.empty() &&
-               std::filesystem::path{config.device}.is_absolute(),
-           "config device must be a non-empty absolute path");
+    expect(config.usb_vid == 0x0483, "config USB VID mismatch");
+    expect(config.usb_pid == 0x5740, "config USB PID mismatch");
+    expect(!config.match_vid_only, "config must use strict VID:PID matching");
     expect(config.baudrate == 2000000, "config baudrate mismatch");
     expect(config.stale_timeout == std::chrono::milliseconds{100},
            "config stale timeout mismatch");

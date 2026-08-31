@@ -157,3 +157,13 @@ target_link_libraries(exoskeleton_stream_decoder_test PRIVATE
 )
 
 add_test(NAME exoskeleton_stream_decoder COMMAND exoskeleton_stream_decoder_test)
+
+add_executable(exoskeleton_device_discovery_test
+    exoskeleton_device_discovery_test.cpp
+)
+
+target_link_libraries(exoskeleton_device_discovery_test PRIVATE
+    exoskeleton_input
+)
+
+add_test(NAME exoskeleton_device_discovery COMMAND exoskeleton_device_discovery_test)

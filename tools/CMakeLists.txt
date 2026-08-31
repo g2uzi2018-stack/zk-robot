@@ -82,3 +82,21 @@ target_link_libraries(exoskeleton_monitor PRIVATE
 set_target_properties(exoskeleton_monitor PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}"
 )
+
+# 会使能 TIAGo 电机并持续下发遥操作目标；默认不参与构建，必须显式指定。
+add_executable(exoskeleton_tiago_teleop EXCLUDE_FROM_ALL
+    exoskeleton_tiago_teleop.cpp
+)
+
+target_link_libraries(exoskeleton_tiago_teleop PRIVATE
+    exoskeleton_input
+    tiago_components
+)
+
+target_compile_definitions(exoskeleton_tiago_teleop PRIVATE
+    ZK_ROBOT_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+)
+
+set_target_properties(exoskeleton_tiago_teleop PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}"
+)

@@ -47,6 +47,12 @@ namespace robot::tiago
         // 停止当前关节运动。
         void stop();
 
+        // 主动查询当前电机状态。
+        //
+        // 该操作只请求反馈，不发送位置或速度目标，适合控制器启动前
+        // 建立当前位置接管基准。
+        std::optional<MotorFeedback> queryStatus();
+
         // 同时检查目标位置和速度限制。
         void validateCommand(double position, double velocity_limit) const;
 

@@ -109,12 +109,27 @@ int timeoutMilliseconds(const std::chrono::milliseconds timeout)
 namespace robot::input::exoskeleton
 {
 
-SerialTransport::SerialTransport(std::string device, const std::uint32_t baudrate)
+SerialTransport::SerialTransport(const std::uint32_t baudrate)
+    : baudrate_(baudrate)
+{
+    if (baudrate_ == 0)
+    {
+        throw std::invalid_argument("Exoskeleton baudrate must be positive");
+    }
+}
+
+SerialTransport::SerialTransport(
+    std::string device,
+    const std::uint32_t baudrate)
     : device_(std::move(device)), baudrate_(baudrate)
 {
     if (device_.empty())
     {
         throw std::invalid_argument("Exoskeleton serial device must not be empty");
+    }
+    if (baudrate_ == 0)
+    {
+        throw std::invalid_argument("Exoskeleton baudrate must be positive");
     }
 }
 
@@ -126,8 +141,26 @@ SerialTransport::~SerialTransport()
 bool SerialTransport::open()
 {
     std::lock_guard<std::mutex> lock(mutex_);
+    return openUnlocked();
+}
+
+bool SerialTransport::open(const std::string &device)
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    device_ = device;
+    return openUnlocked();
+}
+
+bool SerialTransport::openUnlocked()
+{
     closeUnlocked();
     last_error_.clear();
+
+    if (device_.empty())
+    {
+        last_error_ = "Exoskeleton serial device must not be empty";
+        return false;
+    }
 
     speed_t speed{};
     if (!baudrateToTermios(baudrate_, speed))
@@ -216,6 +249,12 @@ bool SerialTransport::isOpen() const noexcept
 {
     std::lock_guard<std::mutex> lock(mutex_);
     return file_descriptor_ >= 0;
+}
+
+std::string SerialTransport::device() const
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    return device_;
 }
 
 PollResult SerialTransport::poll(const std::chrono::milliseconds timeout)

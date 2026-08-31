@@ -340,18 +340,7 @@ std::vector<std::string> prepareBodyCan(
         throw std::runtime_error("没有找到 SocketCAN 接口");
     }
 
-    const auto &selector = can_config.socketcan.body_adapter;
-    const auto body_interfaces = manager.selectAdapter(
-        all_interfaces,
-        robot::can::CanAdapterSelector{
-            selector.selector,
-            selector.value,
-            selector.expected_channels});
-    if (body_interfaces.empty())
-    {
-        throw std::runtime_error(
-            "没有找到匹配的四通道本体 USB-CAN 适配器");
-    }
+    const auto body_interfaces = all_interfaces;
 
     const robot::can::CanInterfaceSettings settings{
         can_config.socketcan.bitrate,

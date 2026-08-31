@@ -285,19 +285,12 @@ std::vector<std::string> prepareBodyCan(
     const robot::ti5::CanConfig &can_config)
 {
     robot::can::CanInterfaceManager manager;
-    const auto all = manager.enumerate(
+    const auto body = manager.enumerate(
         can_config.socketcan.interface_regex);
-    const auto &selector = can_config.socketcan.body_adapter;
-    const auto body = manager.selectAdapter(
-        all,
-        robot::can::CanAdapterSelector{
-            selector.selector,
-            selector.value,
-            selector.expected_channels});
     if (body.empty())
     {
         throw std::runtime_error(
-            "没有找到匹配的本体 USB-CAN 适配器");
+            "没有找到符合 interface_regex 的 SocketCAN 接口");
     }
 
     const robot::can::CanInterfaceSettings settings{

@@ -429,16 +429,46 @@ std::vector<std::string> prepareAdapterInterfaces(
     return result;
 }
 
+std::vector<std::string> prepareAllCanInterfaces(
+    const std::string &interface_regex,
+    const robot::can::CanInterfaceSettings &settings,
+    const bool manage_linux_link)
+{
+    robot::can::CanInterfaceManager manager;
+    const auto all = manager.enumerate(interface_regex);
+    if (all.empty())
+    {
+        throw std::runtime_error("没有找到符合 interface_regex 的 SocketCAN 接口");
+    }
+
+    std::vector<std::string> result;
+    result.reserve(all.size());
+    for (const auto &interface : all)
+    {
+        const auto ready = manage_linux_link
+                               ? manager.prepare(interface.name, settings)
+                               : manager.inspect(interface.name);
+        if (!ready.up)
+        {
+            throw std::runtime_error(
+                interface.name + " 未处于 UP 状态");
+        }
+        if (settings.validate_bitrate &&
+            (!ready.bitrate || *ready.bitrate != settings.bitrate))
+        {
+            throw std::runtime_error(
+                interface.name + " 波特率不一致");
+        }
+        result.push_back(ready.name);
+    }
+    return result;
+}
+
 std::vector<std::string> prepareBodyCan(
     const robot::ti5::CanConfig &can_config)
 {
-    const auto &selector = can_config.socketcan.body_adapter;
-    return prepareAdapterInterfaces(
+    return prepareAllCanInterfaces(
         can_config.socketcan.interface_regex,
-        robot::can::CanAdapterSelector{
-            selector.selector,
-            selector.value,
-            selector.expected_channels},
         robot::can::CanInterfaceSettings{
             can_config.socketcan.bitrate,
             static_cast<std::uint32_t>(

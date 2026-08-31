@@ -5,12 +5,12 @@
 本文客观记录本机 TIAGo++ Webots/SocketCAN 仿真的资源、接口、启动方式和验收口径。
 
 ```text
-/home/kuang/workspace/tiago_can_webots   Webots 模型、CAN 网关、映射和验证工具
+/home/kuang/workspace/webot_simulate   Webots 模型、CAN 网关、映射和验证工具
 ```
 
 截至 2026-08-14：
 
-- `tiago_can_webots` 已映射全部 `23` 个主动关节，使用 `vcan0..vcan10`；
+- `webot_simulate` 已映射全部 `23` 个主动关节，使用 `vcan0..vcan10`；
 - CAN v1 仍是 Classical CAN、11 位标准 ID、固定 8 字节帧，线协议未改变；
 - base、torso、head 分别使用 `vcan8`、`vcan9`、`vcan10`；
 - Webots Robot 根节点为 `locked FALSE`，两轮收到 vcan8 velocity 命令后可产生
@@ -20,11 +20,11 @@
 
 | 数据 | 权威文件 |
 |---|---|
-| Webots 场景和地面接触参数 | `tiago_can_webots/worlds/tiago_dual_can.wbt` |
-| Motor、PositionSensor、物理根和初始姿态 | `tiago_can_webots/protos/TiagoDual.proto` |
-| 关节类型、机械限位和机械链 | `tiago_can_webots/generated/tiago_dual.urdf` |
-| vCAN、Node ID、控制模式和编码器标定 | `tiago_can_webots/config/joint_mapping.yaml` |
-| CAN v1 定义 | `tiago_can_webots/config/can_protocol.yaml` |
+| Webots 场景和地面接触参数 | `webot_simulate/worlds/tiago_dual_can.wbt` |
+| Motor、PositionSensor、物理根和初始姿态 | `webot_simulate/protos/TiagoDual.proto` |
+| 关节类型、机械限位和机械链 | `webot_simulate/generated/tiago_dual.urdf` |
+| vCAN、Node ID、控制模式和编码器标定 | `webot_simulate/config/joint_mapping.yaml` |
+| CAN v1 定义 | `webot_simulate/config/can_protocol.yaml` |
 
 `joint_mapping.yaml` 是仿真映射真源；Node ID、vCAN、控制模式和单位均以它为准。
 
@@ -33,7 +33,7 @@
 构建并验证仿真后端：
 
 ```bash
-cd /home/kuang/workspace/tiago_can_webots
+cd /home/kuang/workspace/webot_simulate
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo
 cmake --build build
 ctest --test-dir build --output-on-failure
@@ -44,7 +44,7 @@ ctest --test-dir build --output-on-failure
 终端 1 创建 11 条 vCAN 并启动正式场景：
 
 ```bash
-cd /home/kuang/workspace/tiago_can_webots
+cd /home/kuang/workspace/webot_simulate
 ./scripts/setup_vcan.sh          # 创建并启用 vcan0..vcan10
 ./scripts/launch_webots.sh
 ```
@@ -52,7 +52,7 @@ cd /home/kuang/workspace/tiago_can_webots
 终端 2 使用正式入口连接已经运行的 `TIAGoDual`：
 
 ```bash
-cd /home/kuang/workspace/tiago_can_webots
+cd /home/kuang/workspace/webot_simulate
 ./scripts/run_gateway.sh
 ```
 
@@ -162,7 +162,7 @@ PROTO 中两只驱动轮使用 `tiago_drive_wheel` 接触材料，四个固定�
 端到端验证命令：
 
 ```bash
-cd /home/kuang/workspace/tiago_can_webots
+cd /home/kuang/workspace/webot_simulate
 bash tests/test_base_displacement.sh
 ```
 
@@ -194,7 +194,7 @@ Robot 世界坐标。2026-08-14 本机实测 2.5 秒平移约 `0.1478 m`，停�
 静态和单元测试：
 
 ```bash
-cd /home/kuang/workspace/tiago_can_webots
+cd /home/kuang/workspace/webot_simulate
 ctest --test-dir build --output-on-failure
 .venv/bin/pytest -q
 .venv/bin/python scripts/validate_webots_model.py

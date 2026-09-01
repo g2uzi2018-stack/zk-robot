@@ -1,10 +1,8 @@
 #include "input/exoskeleton/exoskeleton_protocol.hpp"
 
-#include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <stdexcept>
-#include <string>
 
 namespace
 {
@@ -12,7 +10,6 @@ namespace
 constexpr std::size_t kLeftJoystickXOffset = 0;
 constexpr std::size_t kLeftJoystickYOffset = 2;
 constexpr std::size_t kLeftButtonsOffset = 4;
-constexpr std::size_t kLeftExtendedButtonsOffset = 5;
 constexpr std::size_t kLeftTriggerOffset = 6;
 
 constexpr std::size_t kRightJoystickXOffset = 8;
@@ -25,11 +22,6 @@ constexpr std::size_t kLeftJointsOffset = 16;
 constexpr std::size_t kRightJointsOffset = 32;
 constexpr std::size_t kTorsoImuOffset = 48;
 constexpr std::size_t kHeadImuOffset = 88;
-
-constexpr double kTwoPi = 6.283185307179586476925286766559;
-constexpr std::int16_t kJoystickCenter = 2048;
-constexpr std::int16_t kJoystickDeadzone = 200;
-constexpr double kJoystickScale = 1848.0;
 
 std::uint16_t readUnsigned16(
     const robot::input::exoskeleton::ExoskeletonFrame &frame,
@@ -70,34 +62,6 @@ float readFloat32(
     return value;
 }
 
-double normalizeJoystick(const std::int16_t raw)
-{
-    const double difference =
-        static_cast<double>(raw) - static_cast<double>(kJoystickCenter);
-    if (std::abs(difference) < static_cast<double>(kJoystickDeadzone))
-    {
-        return 0.0;
-    }
-
-    return std::clamp(difference / kJoystickScale, -1.0, 1.0);
-}
-
-double normalizeTrigger(const std::int16_t raw)
-{
-    if (raw < 700)
-    {
-        return 0.0;
-    }
-    if (raw > 3700)
-    {
-        return 1.0;
-    }
-    return std::clamp(
-        (static_cast<double>(raw) - 700.0) / 3000.0,
-        0.0,
-        1.0);
-}
-
 robot::input::exoskeleton::JoystickState parseJoystick(
     const robot::input::exoskeleton::ExoskeletonFrame &frame,
     const std::size_t offset)
@@ -105,13 +69,10 @@ robot::input::exoskeleton::JoystickState parseJoystick(
     robot::input::exoskeleton::JoystickState result;
     result.raw_x = readSigned16(frame, offset + kLeftJoystickXOffset);
     result.raw_y = readSigned16(frame, offset + kLeftJoystickYOffset);
-    result.x = normalizeJoystick(result.raw_x);
-    result.y = normalizeJoystick(result.raw_y);
-    result.buttons_raw = frame[offset + kLeftButtonsOffset + 1];
-    result.extended_buttons_raw =
-        frame[offset + kLeftExtendedButtonsOffset + 1];
+    result.key_mask_raw = readUnsigned16(
+        frame,
+        offset + kLeftButtonsOffset);
     result.trigger_raw = readSigned16(frame, offset + kLeftTriggerOffset);
-    result.trigger = normalizeTrigger(result.trigger_raw);
     return result;
 }
 
@@ -169,11 +130,23 @@ robot::input::exoskeleton::ImuState parseImu(
 namespace robot::input::exoskeleton
 {
 
+bool isSupportedFrameSize(const std::size_t frame_size) noexcept
+{
+    return frame_size == kLegacyBaseFrameSize ||
+           frame_size == kLegacyTorsoImuFrameSize ||
+           frame_size == kLegacyFullFrameSize;
+}
+
 std::uint8_t ExoskeletonProtocol::calculateChecksum(
     const ExoskeletonFrame &frame) noexcept
 {
+    if (!isSupportedFrameSize(frame.frame_size))
+    {
+        return 0;
+    }
+
     std::uint8_t checksum = 0;
-    for (std::size_t index = 1; index <= kPayloadSize; ++index)
+    for (std::size_t index = 1; index + 2 < frame.frame_size; ++index)
     {
         checksum = static_cast<std::uint8_t>(checksum ^ frame[index]);
     }
@@ -183,46 +156,65 @@ std::uint8_t ExoskeletonProtocol::calculateChecksum(
 bool ExoskeletonProtocol::validateFrame(
     const ExoskeletonFrame &frame) noexcept
 {
+    if (!isSupportedFrameSize(frame.frame_size))
+    {
+        return false;
+    }
+
     return frame[0] == kFrameHead &&
-           frame[kFrameSize - 1] == kFrameTail &&
-           calculateChecksum(frame) == frame[kPayloadSize + 1];
+           frame[frame.frame_size - 1] == kFrameTail &&
+           calculateChecksum(frame) == frame[frame.frame_size - 2];
 }
 
 ExoskeletonState ExoskeletonProtocol::parse(const ExoskeletonFrame &frame)
 {
+    if (!isSupportedFrameSize(frame.frame_size))
+    {
+        throw std::invalid_argument("Invalid exoskeleton frame size");
+    }
     if (frame[0] != kFrameHead)
     {
         throw std::invalid_argument("Invalid exoskeleton frame head");
     }
-    if (frame[kFrameSize - 1] != kFrameTail)
+    if (frame[frame.frame_size - 1] != kFrameTail)
     {
         throw std::invalid_argument("Invalid exoskeleton frame tail");
     }
-    if (calculateChecksum(frame) != frame[kPayloadSize + 1])
+    if (calculateChecksum(frame) != frame[frame.frame_size - 2])
     {
         throw std::invalid_argument("Invalid exoskeleton frame checksum");
     }
 
     ExoskeletonState result;
+    result.frame_size = frame.frame_size;
+    result.format_version = 1;
     result.left = parseJoystick(frame, 0);
     result.right = parseJoystick(frame, 8);
 
-    for (std::size_t index = 0; index < result.left_joint_rad.size(); ++index)
+    for (std::size_t index = 0; index < kVendorArmEncoderCount; ++index)
     {
-        result.left_joint_rad[index] =
-            static_cast<double>(readSigned16(frame, kLeftJointsOffset + index * 2)) *
-            (kTwoPi / 16384.0);
-        result.right_joint_rad[index] =
-            static_cast<double>(readSigned16(frame, kRightJointsOffset + index * 2)) *
-            (kTwoPi / 16384.0);
+        result.left_arm_joint_raw[index] =
+            readSigned16(frame, kLeftJointsOffset + index * 2);
+        result.right_arm_joint_raw[index] =
+            readSigned16(frame, kRightJointsOffset + index * 2);
+        result.left_arm_joint_rad[index] =
+            static_cast<double>(result.left_arm_joint_raw[index]) *
+            kVendorEncoderToRadianRatio;
+        result.right_arm_joint_rad[index] =
+            static_cast<double>(result.right_arm_joint_raw[index]) *
+            kVendorEncoderToRadianRatio;
+    }
+    if (frame.frame_size - 3 >= kLegacyTorsoImuPayloadSize)
+    {
+        result.torso_imu = parseImu(frame, kTorsoImuOffset);
+        result.format_version = 2;
+    }
+    if (frame.frame_size - 3 >= kLegacyFullPayloadSize)
+    {
+        result.head_imu = parseImu(frame, kHeadImuOffset);
+        result.format_version = 3;
     }
 
-    result.torso_imu = parseImu(frame, kTorsoImuOffset);
-    result.head_imu = parseImu(frame, kHeadImuOffset);
-
-    // 模式字节就是普通 buttons 字节的完整 raw 值；高位不能丢失。
-    result.left_mode_raw = result.left.buttons_raw;
-    result.right_mode_raw = result.right.buttons_raw;
     return result;
 }
 

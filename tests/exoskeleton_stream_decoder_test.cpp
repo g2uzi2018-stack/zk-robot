@@ -35,13 +35,16 @@ void expectThrows(Callable &&callable, const std::string &message)
     throw std::runtime_error(message);
 }
 
-ExoskeletonFrame makeFrame(const std::uint8_t payload_value)
+ExoskeletonFrame makeFrame(
+    const std::uint8_t payload_value,
+    const std::size_t payload_size = kLegacyFullPayloadSize)
 {
     ExoskeletonFrame frame{};
+    frame.frame_size = payload_size + 3;
     frame.fill(payload_value);
     frame[0] = kFrameHead;
-    frame[kFrameSize - 1] = kFrameTail;
-    frame[kPayloadSize + 1] = calculateChecksum(frame);
+    frame[frame.size() - 1] = kFrameTail;
+    frame[frame.size() - 2] = calculateChecksum(frame);
     return frame;
 }
 
@@ -200,6 +203,47 @@ void testPayloadHeadAndInputValidation()
         "decoder must reject a null non-empty input");
 }
 
+void testVendorVariableLengths()
+{
+    const auto full = makeFrame(0x61, kLegacyFullPayloadSize);
+    const auto torso = makeFrame(0x62, kLegacyTorsoImuPayloadSize);
+    const auto base = makeFrame(0x63, kLegacyBasePayloadSize);
+
+    std::vector<std::uint8_t> stream = bytes(full);
+    const auto torso_bytes = bytes(torso);
+    const auto base_bytes = bytes(base);
+    stream.insert(stream.end(), torso_bytes.begin(), torso_bytes.end());
+    stream.insert(stream.end(), base_bytes.begin(), base_bytes.end());
+
+    ExoskeletonStreamDecoder decoder{ExoskeletonFrameMode::Auto};
+    const auto frames = decoder.feed(stream);
+    expect(
+        frames.size() == 3 && frames[0] == full && frames[1] == torso &&
+            frames[2] == base,
+        "vendor 131/91/51 frame sequence was not decoded");
+    expect(
+        frames[0].size() == kLegacyFullFrameSize &&
+            frames[1].size() == kLegacyTorsoImuFrameSize &&
+            frames[2].size() == kLegacyBaseFrameSize,
+        "decoded vendor frame lengths were not preserved");
+    expect(
+        decoder.statistics().length_switches >= 2,
+        "auto decoder did not record vendor frame length switches");
+
+    ExoskeletonStreamDecoder fragmented{ExoskeletonFrameMode::Auto};
+    const auto base_only = bytes(base);
+    expect(
+        fragmented.feed(base_only.data(), base_only.size() / 2).empty(),
+        "auto decoder emitted a partial 51-byte frame");
+    const auto rest = fragmented.feed(
+        base_only.data() + base_only.size() / 2,
+        base_only.size() - base_only.size() / 2);
+    expectOneFrame(
+        rest,
+        base,
+        "auto decoder did not reassemble a fragmented 51-byte frame");
+}
+
 } // namespace
 
 int main()
@@ -210,6 +254,7 @@ int main()
         testNoiseAndRandomChunks();
         testBadCandidatesResynchronize();
         testPayloadHeadAndInputValidation();
+        testVendorVariableLengths();
         std::cout << "Exoskeleton stream decoder tests passed\n";
         return 0;
     }

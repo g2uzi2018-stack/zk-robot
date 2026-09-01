@@ -78,7 +78,20 @@ ExoskeletonFrame emptyFrame()
 
 void finish(ExoskeletonFrame &frame)
 {
-    frame[kPayloadSize + 1] = calculateChecksum(frame);
+    frame[frame.size() - 2] = calculateChecksum(frame);
+}
+
+ExoskeletonFrame makeLegacyFrame(
+    const std::size_t payload_size,
+    const std::uint8_t payload_value = 0)
+{
+    ExoskeletonFrame frame{};
+    frame.frame_size = payload_size + 3;
+    frame.fill(payload_value);
+    frame[0] = kFrameHead;
+    frame[frame.size() - 1] = kFrameTail;
+    finish(frame);
+    return frame;
 }
 
 void writeUnitQuaternion(
@@ -109,30 +122,25 @@ ExoskeletonFrame validImuFrame()
 void testNormalFrameAndFields()
 {
     auto frame = validImuFrame();
-    writeInt16(frame, 0, 2048);
-    writeInt16(frame, 2, 1848);
-    frame[1 + 4] = 0x1F;
-    frame[1 + 5] = 0x3F;
-    writeInt16(frame, 6, 699);
+    writeInt16(frame, 0, 1234);
+    writeInt16(frame, 2, -567);
+    writeInt16(frame, 4, static_cast<std::int16_t>(0x1F3F));
+    writeInt16(frame, 6, 512);
 
-    writeInt16(frame, 8, 2247);
-    writeInt16(frame, 10, 2248);
-    frame[1 + 12] = 0x3F;
-    frame[1 + 13] = 0x1F;
-    writeInt16(frame, 14, 3701);
+    writeInt16(frame, 8, -1234);
+    writeInt16(frame, 10, 567);
+    writeInt16(frame, 12, 0x001F);
+    writeInt16(frame, 14, 3584);
 
-    const std::array<std::int16_t, 7> left_raw{
-        0, 16384, -16384, -1, 2, -3, 1234};
-    const std::array<std::int16_t, 7> right_raw{
-        -16384, 16383, -2, 3, -4, 5, -6};
+    const std::array<std::int16_t, 8> left_raw{
+        0, 16384, -16384, -1, 2, -3, 1234, -2222};
+    const std::array<std::int16_t, 8> right_raw{
+        -16384, 16383, -2, 3, -4, 5, -6, 3333};
     for (std::size_t index = 0; index < left_raw.size(); ++index)
     {
         writeInt16(frame, 16 + index * 2, left_raw[index]);
         writeInt16(frame, 32 + index * 2, right_raw[index]);
     }
-    // Reserved words are intentionally non-zero. They must not shift either arm.
-    writeInt16(frame, 30, 3210);
-    writeInt16(frame, 46, -3210);
 
     writeFloat(frame, 48, 1.25F);
     writeFloat(frame, 52, -2.5F);
@@ -158,33 +166,37 @@ void testNormalFrameAndFields()
 
     expect(isValidFrame(frame), "normal frame rejected");
     const auto state = ExoskeletonProtocol::parse(frame);
-    const double radians_per_count =
-        6.283185307179586476925286766559 / 16384.0;
-    expect(near(state.left_joint_rad[1], 16384.0 * radians_per_count),
+    const double radians_per_count = kVendorEncoderToRadianRatio;
+    expect(near(state.left_arm_joint_rad[1], 16384.0 * radians_per_count),
            "left joint little-endian conversion failed");
-    expect(near(state.left_joint_rad[2], -16384.0 * radians_per_count),
+    expect(near(state.left_arm_joint_rad[2], -16384.0 * radians_per_count),
            "negative left joint conversion failed");
-    expect(near(state.right_joint_rad[0], -16384.0 * radians_per_count),
+    expect(near(state.right_arm_joint_rad[0], -16384.0 * radians_per_count),
            "right joint offset/reserved word parsing failed");
-    expect(state.left.raw_x == 2048 && state.left.raw_y == 1848,
+    expect(state.left.raw_x == 1234 && state.left.raw_y == -567,
            "left joystick raw values failed");
-    expect(near(state.left.x, 0.0) && near(state.left.y, -200.0 / 1848.0),
-           "left joystick normalization failed");
-    expect(state.right.raw_x == 2247 && near(state.right.x, 0.0),
-           "joystick deadzone must use strict less-than boundary");
-    expect(near(state.right.y, 200.0 / 1848.0),
-           "joystick non-deadzone boundary failed");
-    expect(state.left.trigger_raw == 699 && near(state.left.trigger, 0.0),
-           "trigger lower boundary failed");
-    expect(state.right.trigger_raw == 3701 && near(state.right.trigger, 1.0),
-           "trigger upper boundary failed");
-    expect(state.left.buttons_raw == 0x1F &&
-               state.left.extended_buttons_raw == 0x3F,
-           "left raw button bytes were not preserved");
-    expect(state.left_mode_raw == 0x1F && state.right_mode_raw == 0x3F,
-           "raw mode values must retain 0x1F/0x3F distinction");
+    expect(state.right.raw_x == -1234 && state.right.raw_y == 567 &&
+               state.left.trigger_raw == 512 &&
+               state.right.trigger_raw == 3584,
+           "right joystick or trigger raw values failed");
+    expect(state.left.key_mask_raw == 0x1F3F &&
+               state.right.key_mask_raw == 0x001F,
+           "raw key_mask values were not preserved");
+    expect(state.left.toggleOn() && !state.right.toggleOn() &&
+               state.left.buttonsReleased() &&
+               state.left.extendedButtonsReleased(),
+           "vendor key_mask bit semantics failed");
     expect(!state.left.buttonPressed(0x01),
            "high button bit must mean released for low-active buttons");
+    expect(!state.left.extendedButtonPressed(0x01),
+           "high extension button bit must mean released for low-active buttons");
+    expect(state.left_arm_joint_raw == left_raw &&
+               state.right_arm_joint_raw == right_raw &&
+               near(state.left_arm_joint_rad[7],
+                    -2222.0 * radians_per_count) &&
+               near(state.right_arm_joint_rad[7],
+                    3333.0 * radians_per_count),
+           "all eight vendor encoder slots were not preserved");
     expect(state.torso_imu.present && state.torso_imu.valid &&
                state.head_imu.present && state.head_imu.valid,
            "valid IMU was rejected");
@@ -195,7 +207,7 @@ void testNormalFrameAndFields()
            "protocol layer must not assign a host timestamp");
 }
 
-void testValidationAndTriggerBoundaries()
+void testValidation()
 {
     auto frame = validImuFrame();
     expect(ExoskeletonProtocol::validateFrame(frame),
@@ -222,28 +234,6 @@ void testValidationAndTriggerBoundaries()
         [&] { ExoskeletonProtocol::parse(wrong_checksum); },
         "wrong checksum must throw");
 
-    for (const auto &[raw, expected] : std::array<std::pair<std::int16_t, double>, 4>{
-             std::pair<std::int16_t, double>{699, 0.0},
-             std::pair<std::int16_t, double>{700, 0.0},
-             std::pair<std::int16_t, double>{3700, 1.0},
-             std::pair<std::int16_t, double>{3701, 1.0}})
-    {
-        auto boundary = validImuFrame();
-        writeInt16(boundary, 6, raw);
-        finish(boundary);
-        const auto state = ExoskeletonProtocol::parse(boundary);
-        expect(near(state.left.trigger, expected),
-               "trigger boundary mapping failed");
-    }
-
-    auto clamped = validImuFrame();
-    writeInt16(clamped, 0, std::numeric_limits<std::int16_t>::max());
-    writeInt16(clamped, 2, std::numeric_limits<std::int16_t>::min());
-    finish(clamped);
-    const auto clamped_state = ExoskeletonProtocol::parse(clamped);
-    expect(near(clamped_state.left.x, 1.0) &&
-               near(clamped_state.left.y, -1.0),
-           "joystick normalized output must be clamped");
 }
 
 void testInvalidImuDoesNotThrow()
@@ -273,6 +263,50 @@ void testInvalidImuDoesNotThrow()
            "infinite IMU field must mark IMU invalid");
 }
 
+void testVendorFrameLengths()
+{
+    auto base = makeLegacyFrame(kLegacyBasePayloadSize);
+    writeInt16(base, 0, 2000);
+    writeInt16(base, 16, -1234);
+    writeInt16(base, 32, 2345);
+    finish(base);
+
+    expect(isSupportedFrameSize(base.size()), "51-byte frame size not supported");
+    expect(isValidFrame(base), "valid 51-byte vendor frame rejected");
+    const auto base_state = parseFrame(base);
+    expect(base_state.frame_size == kLegacyBaseFrameSize &&
+               base_state.format_version == 1,
+           "51-byte vendor format metadata failed");
+    expect(!base_state.torso_imu.present && !base_state.head_imu.present,
+           "51-byte vendor frame must not invent IMU data");
+    expect(base_state.left_arm_joint_rad[0] != 0.0 &&
+               base_state.right_arm_joint_rad[0] != 0.0,
+           "51-byte vendor arm data failed");
+
+    auto torso = makeLegacyFrame(kLegacyTorsoImuPayloadSize);
+    writeFloat(torso, 48, 1.0F);
+    writeFloat(torso, 52, 2.0F);
+    writeFloat(torso, 56, 3.0F);
+    writeUnitQuaternion(torso, 48);
+    finish(torso);
+    const auto torso_state = parseFrame(torso);
+    expect(torso_state.frame_size == kLegacyTorsoImuFrameSize &&
+               torso_state.format_version == 2 &&
+               torso_state.torso_imu.present && torso_state.torso_imu.valid &&
+               !torso_state.head_imu.present,
+           "91-byte vendor format was not decoded as torso-only IMU");
+
+    auto full = makeLegacyFrame(kLegacyFullPayloadSize);
+    writeUnitQuaternion(full, 48);
+    writeUnitQuaternion(full, 88);
+    finish(full);
+    const auto full_state = parseFrame(full);
+    expect(full_state.frame_size == kLegacyFullFrameSize &&
+               full_state.format_version == 3 &&
+               full_state.torso_imu.present && full_state.head_imu.present,
+           "131-byte vendor format metadata failed");
+}
+
 void testConfig()
 {
     const auto config = loadExoskeletonConfig(
@@ -281,11 +315,16 @@ void testConfig()
     expect(config.usb_vid == 0x0483, "config USB VID mismatch");
     expect(config.usb_pid == 0x5740, "config USB PID mismatch");
     expect(!config.match_vid_only, "config must use strict VID:PID matching");
+    expect(config.device == "/dev/exoskeleton", "config device mismatch");
     expect(config.baudrate == 2000000, "config baudrate mismatch");
+    expect(config.poll_timeout == std::chrono::milliseconds{20},
+           "config poll timeout mismatch");
     expect(config.stale_timeout == std::chrono::milliseconds{100},
            "config stale timeout mismatch");
     expect(config.reconnect_interval == std::chrono::milliseconds{1000},
            "config reconnect interval mismatch");
+    expect(config.frame_mode == ExoskeletonFrameMode::Full,
+           "config frame mode mismatch");
 }
 
 } // namespace
@@ -295,8 +334,9 @@ int main()
     try
     {
         testNormalFrameAndFields();
-        testValidationAndTriggerBoundaries();
+        testValidation();
         testInvalidImuDoesNotThrow();
+        testVendorFrameLengths();
         testConfig();
         std::cout << "Exoskeleton protocol tests passed\n";
         return 0;

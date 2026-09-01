@@ -30,17 +30,19 @@ void printJoystick(
     const robot::input::exoskeleton::JoystickState &joystick)
 {
     std::cout << name << " joystick:\n"
-              << "  x: " << joystick.x << " (raw " << joystick.raw_x << ")\n"
-              << "  y: " << joystick.y << " (raw " << joystick.raw_y << ")\n"
-              << "  trigger: " << joystick.trigger
-              << " (raw " << joystick.trigger_raw << ")\n"
-              << "  buttons raw: 0x"
-              << std::hex << std::setw(2) << std::setfill('0')
-              << static_cast<unsigned int>(joystick.buttons_raw)
-              << "\n  extended buttons raw: 0x"
-              << std::setw(2)
-              << static_cast<unsigned int>(joystick.extended_buttons_raw)
-              << std::dec << std::setfill(' ') << "\n";
+              << "  axis_x raw: " << joystick.raw_x << "\n"
+              << "  axis_y raw: " << joystick.raw_y << "\n"
+              << "  trigger raw: " << joystick.trigger_raw << "\n"
+              << "  key_mask raw: 0x" << std::hex << std::setw(4)
+              << std::setfill('0')
+              << static_cast<unsigned int>(joystick.key_mask_raw)
+              << std::dec << std::setfill(' ')
+              << " (toggle=" << (joystick.toggleOn() ? "ON" : "OFF")
+              << ", buttons_released="
+              << (joystick.buttonsReleased() ? "yes" : "no")
+              << ", extended_released="
+              << (joystick.extendedButtonsReleased() ? "yes" : "no")
+              << ")\n";
 }
 
 void printImu(
@@ -67,22 +69,21 @@ void printImu(
 
 void printState(const robot::input::exoskeleton::ExoskeletonState &state)
 {
-    std::cout << "Left joints:\n  ";
-    for (const double value : state.left_joint_rad)
+    std::cout << "Left encoder rad (8):\n  ";
+    for (const double value : state.left_arm_joint_rad)
     {
         std::cout << value << ' ';
     }
-    std::cout << "\nRight joints:\n  ";
-    for (const double value : state.right_joint_rad)
+    std::cout << "\nRight encoder rad (8):\n  ";
+    for (const double value : state.right_arm_joint_rad)
     {
         std::cout << value << ' ';
     }
     std::cout << "\n"
-              << "Mode raw: left=0x" << std::hex
-              << static_cast<unsigned int>(state.left_mode_raw)
-              << ", right=0x"
-              << static_cast<unsigned int>(state.right_mode_raw)
-              << std::dec << "\n";
+              << "Frame: " << state.frame_size
+              << " bytes, format_version: "
+              << static_cast<unsigned int>(state.format_version) << "\n"
+              << "目标机器人关节语义不由厂商 SDK 定义，需由映射配置确认。\n";
 
     printJoystick("Left", state.left);
     printJoystick("Right", state.right);
@@ -147,6 +148,8 @@ int main(int argc, char **argv)
                       << current_statistics.tail_failures
                       << ", discarded bytes: "
                       << current_statistics.discarded_bytes
+                      << ", length switches: "
+                      << current_statistics.length_switches
                       << ", reconnects: "
                       << current_statistics.reconnect_count << "\n";
 

@@ -1,13 +1,30 @@
-# 外骨骼 -> TIAGo 遥操作策略。
+# Qnbot 外骨骼 -> TIAGo 遥操作策略。
 #
-# 这里的 retargeting 参数是机器人关节坐标标定，不是串口协议常量。
-# 正式真机使用前，应根据当前 TIAGo 的零位、方向和限位重新确认。
+# 传输字段、手柄 key_mask、编码器槽位和原始值换算以厂商
+# qnbot-exoskeleton-SDK/qnbot_sdk_v1.2 为准。本文件只保存“厂商数据如何
+# 经过现场标定后映射到 TIAGo”的应用层策略；它不重新定义外骨骼协议。
 teleop:
   mode:
-    # 文档约定：左右普通按键均为 0x1F 时进入遥操作主模式。
-    run_raw: 0x1F
-    # 文档约定：左右普通按键均为 0x3F 时退出遥操作。
-    exit_raw: 0x3F
+    # 厂商 SDK：key_mask bit5=1 表示 ON，bit5=0 表示 OFF。
+    # 运行前要求左右两侧 bit5 都为 ON，且普通/扩展按键均已松开。
+    run_toggle_on: true
+    # 厂商 SDK 没有“退出档位字节”；应用层用左右 bit5 同时 OFF 作为停止条件。
+    stop_when_both_toggle_off: true
+
+  handset_calibration:
+    # 这些数值必须直接复制自 qnbot_sdk.Hand.GetCalibParams（或厂商 CLI
+    # hand.calib.get）的回读结果。手柄索引约定：0=左，1=右，需现场确认。
+    source: qnbot_sdk.Hand.GetCalibParams
+    # false 时 --confirm 会一直停在等待状态，避免用未经 SDK 回读和现场
+    # 确认的常量驱动实体机器人。
+    verified: false
+    left: {}
+    right: {}
+    # verified=true 时，每侧填写：
+    # jx: {center: ..., max: ..., min: ...}
+    # jy: {center: ..., max: ..., min: ...}
+    # trigger: {start: ..., max: ...}
+    # deadzone_raw: 0
 
   timing:
     # Executor 控制周期和外部目标刷新周期，单位 ms。
@@ -19,13 +36,17 @@ teleop:
     robot_feedback_timeout_ms: 3000
 
   retargeting:
-    # target_joint_rad = exo_joint_rad * scale + offset_rad
-    # 关节顺序：SHOULDER_P, SHOULDER_R, SHOULDER_Y,
-    #          ELBOW_Y, WRIST_P, WRIST_Y, WRIST_R
-    left_scale: [1.0, -1.0, -1.0, -1.0, 1.0, 1.0, -1.0]
-    left_offset_rad: [-1.57, 0.0, 0.0, -1.57, 0.0, 0.0, 0.0]
-    right_scale: [1.0, -1.0, -1.0, 1.0, 1.0, -1.0, -1.0]
-    right_offset_rad: [1.57, 0.0, 0.0, 1.57, 0.0, 0.0, 0.0]
+    # 厂商 SDK 只定义每侧 8 个 encoder slot，不定义“第几个是肩/肘/腕”。
+    # TIAGo 当前接口消费 7 个目标关节；这些索引必须按现场逐轴活动确认。
+    verified: false
+    left_source_indices: [0, 1, 2, 3, 4, 5, 6]
+    right_source_indices: [0, 1, 2, 3, 4, 5, 6]
+    # target_joint_rad = vendor_encoder_rad * scale + offset_rad
+    # 未完成现场标定前保持中性值，但 verified=false 会禁止 --confirm。
+    left_scale: [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+    left_offset_rad: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    right_scale: [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+    right_offset_rad: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
 
   arm:
     # 相对于 TIAGo YAML 中各关节 max_velocity 的比例。
@@ -44,10 +65,10 @@ teleop:
     # 相对于 Base YAML 中整车速度上限的比例。
     linear_velocity_fraction: 0.25
     angular_velocity_fraction: 0.25
-    # 左轮盘 y 控制前后，x 控制差速底盘左右转向。
+    # 左手柄归一化后的 y 控制前后，x 控制差速底盘左右转向。
     linear_axis_sign: 1
     angular_axis_sign: 1
-    # 重新接管前要求左轮盘回中，避免恢复时突然移动。
+    # 重新接管前要求左手柄回中，避免恢复时突然移动。
     rearm_center_threshold: 0.10
 
   safety:

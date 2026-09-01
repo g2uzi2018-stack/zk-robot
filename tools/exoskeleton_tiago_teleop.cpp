@@ -50,7 +50,38 @@ constexpr std::size_t kArmJointCount = Arm::kJointCount;
 
 std::atomic<bool> stop_requested{false};
 
-std::string modeHex(std::uint8_t value);
+struct HandsetCalibration
+{
+    bool verified{false};
+    std::int32_t jx_center{0};
+    std::int32_t jx_max{0};
+    std::int32_t jx_min{0};
+    std::int32_t jy_center{0};
+    std::int32_t jy_max{0};
+    std::int32_t jy_min{0};
+    std::int32_t trig_start{0};
+    std::int32_t trig_max{0};
+    std::int32_t deadzone_raw{0};
+
+    bool ready() const noexcept
+    {
+        return verified &&
+               jx_min < jx_center && jx_center < jx_max &&
+               jy_min < jy_center && jy_center < jy_max &&
+               trig_start < trig_max && deadzone_raw >= 0 &&
+               deadzone_raw < (jx_center - jx_min) &&
+               deadzone_raw < (jx_max - jx_center) &&
+               deadzone_raw < (jy_center - jy_min) &&
+               deadzone_raw < (jy_max - jy_center);
+    }
+};
+
+struct NormalizedHandset
+{
+    double x{0.0};
+    double y{0.0};
+    double trigger{0.0};
+};
 
 void signalHandler(int)
 {
@@ -88,7 +119,8 @@ void printUsage(const char *program)
            "      [--dry-run]\n\n"
         << "默认只做配置检查，不打开 TIAGo CAN。\n"
         << "真实遥操作必须显式传 --confirm；它仍会等待外骨骼模式、\n"
-           "机器人反馈、初始姿态接管和左轮盘回中全部满足后才使能电机。\n\n"
+           "厂商手柄校准、编码器映射、机器人反馈、初始姿态接管和左轮盘回中\n"
+           "全部满足后才使能电机。\n\n"
         << "仿真示例：\n"
         << "  " << program << " --confirm\n\n"
         << "真机示例：\n"
@@ -232,38 +264,6 @@ std::chrono::milliseconds requireMilliseconds(
     return std::chrono::milliseconds{value};
 }
 
-std::uint8_t requireByte(
-    const YAML::Node &parent,
-    const char *key,
-    const std::string &context)
-{
-    const auto text = requireScalar<std::string>(parent, key, context);
-    try
-    {
-        std::size_t consumed = 0;
-        const auto value = std::stoul(text, &consumed, 0);
-        if (consumed != text.size() || value > 0xFFU)
-        {
-            throwConfigError(
-                context + "." + key,
-                "必须是 0..255 的十进制或 0x 前缀数值");
-        }
-        return static_cast<std::uint8_t>(value);
-    }
-    catch (const std::invalid_argument &)
-    {
-        throwConfigError(
-            context + "." + key,
-            "必须是 0..255 的十进制或 0x 前缀数值");
-    }
-    catch (const std::out_of_range &)
-    {
-        throwConfigError(
-            context + "." + key,
-            "数值超出范围");
-    }
-}
-
 int requireSign(
     const YAML::Node &parent,
     const char *key,
@@ -327,10 +327,128 @@ std::array<double, N> requireDoubleArray(
     return result;
 }
 
+std::int32_t requireCalibrationValue(
+    const YAML::Node &parent,
+    const char *key,
+    const std::string &context)
+{
+    const auto value = requireScalar<std::int64_t>(parent, key, context);
+    if (value < 0 || value > 0xFFFF)
+    {
+        throwConfigError(
+            context + "." + key,
+            "必须是 0..65535 的厂商 Hand.GetCalibParams 数值");
+    }
+    return static_cast<std::int32_t>(value);
+}
+
+template <std::size_t N>
+std::array<std::size_t, N> requireSourceIndices(
+    const YAML::Node &parent,
+    const char *key,
+    const std::string &context)
+{
+    const auto value = parent[key];
+    if (!value || !value.IsSequence() || value.size() != N)
+    {
+        throwConfigError(
+            context + "." + key,
+            "必须是长度为 " + std::to_string(N) + " 的数组");
+    }
+
+    std::array<std::size_t, N> result{};
+    for (std::size_t index = 0; index < N; ++index)
+    {
+        std::int64_t raw = 0;
+        try
+        {
+            raw = value[index].as<std::int64_t>();
+        }
+        catch (const YAML::Exception &error)
+        {
+            throwConfigError(
+                context + "." + key + "[" + std::to_string(index) + "]",
+                "必须是非负整数: " + std::string(error.what()));
+        }
+        if (raw < 0 ||
+            raw >= static_cast<std::int64_t>(
+                       robot::input::exoskeleton::kVendorArmEncoderCount))
+        {
+            throwConfigError(
+                context + "." + key + "[" + std::to_string(index) + "]",
+                "必须是 0..7 的厂商编码器槽位");
+        }
+
+        result[index] = static_cast<std::size_t>(raw);
+        if (std::find(result.begin(), result.begin() + index, result[index]) !=
+            result.begin() + index)
+        {
+            throwConfigError(
+                context + "." + key,
+                "编码器槽位不能重复");
+        }
+    }
+    return result;
+}
+
+HandsetCalibration loadHandsetCalibration(
+    const YAML::Node &parent,
+    const std::string &context,
+    const bool verified)
+{
+    HandsetCalibration result;
+    result.verified = verified;
+    if (!verified)
+    {
+        return result;
+    }
+
+    const auto jx = requireMap(parent, "jx", context);
+    const auto jy = requireMap(parent, "jy", context);
+    const auto trigger = requireMap(parent, "trigger", context);
+    const auto jx_context = context + ".jx";
+    const auto jy_context = context + ".jy";
+    const auto trigger_context = context + ".trigger";
+
+    result.jx_center = requireCalibrationValue(jx, "center", jx_context);
+    result.jx_max = requireCalibrationValue(jx, "max", jx_context);
+    result.jx_min = requireCalibrationValue(jx, "min", jx_context);
+    result.jy_center = requireCalibrationValue(jy, "center", jy_context);
+    result.jy_max = requireCalibrationValue(jy, "max", jy_context);
+    result.jy_min = requireCalibrationValue(jy, "min", jy_context);
+    result.trig_start = requireCalibrationValue(
+        trigger,
+        "start",
+        trigger_context);
+    result.trig_max = requireCalibrationValue(
+        trigger,
+        "max",
+        trigger_context);
+    result.deadzone_raw = requireCalibrationValue(
+        parent,
+        "deadzone_raw",
+        context);
+
+    if (!result.ready())
+    {
+        throwConfigError(
+            context,
+            "厂商 Hand.GetCalibParams 数值顺序或 deadzone_raw 无效");
+    }
+    return result;
+}
+
 struct TeleopConfig
 {
-    std::uint8_t run_mode_raw{0};
-    std::uint8_t exit_mode_raw{0};
+    bool run_toggle_on{true};
+    bool stop_when_both_toggle_off{true};
+
+    HandsetCalibration left_handset;
+    HandsetCalibration right_handset;
+
+    bool retargeting_verified{false};
+    std::array<std::size_t, kArmJointCount> left_source_indices{};
+    std::array<std::size_t, kArmJointCount> right_source_indices{};
 
     std::chrono::milliseconds executor_control_period{};
     std::chrono::milliseconds loop_period{};
@@ -381,6 +499,21 @@ TeleopConfig loadTeleopConfig(const std::filesystem::path &path)
     const auto context = path.string() + ".teleop";
     const auto mode = requireMap(teleop, "mode", context);
     const auto mode_context = context + ".mode";
+    const auto handset_calibration = requireMap(
+        teleop,
+        "handset_calibration",
+        context);
+    const auto handset_calibration_context = context + ".handset_calibration";
+    const auto left_handset = requireMap(
+        handset_calibration,
+        "left",
+        handset_calibration_context);
+    const auto right_handset = requireMap(
+        handset_calibration,
+        "right",
+        handset_calibration_context);
+    const auto left_handset_context = handset_calibration_context + ".left";
+    const auto right_handset_context = handset_calibration_context + ".right";
     const auto timing = requireMap(teleop, "timing", context);
     const auto timing_context = context + ".timing";
     const auto retargeting = requireMap(teleop, "retargeting", context);
@@ -395,12 +528,40 @@ TeleopConfig loadTeleopConfig(const std::filesystem::path &path)
     const auto safety_context = context + ".safety";
 
     TeleopConfig result;
-    result.run_mode_raw = requireByte(mode, "run_raw", mode_context);
-    result.exit_mode_raw = requireByte(mode, "exit_raw", mode_context);
-    if (result.run_mode_raw == result.exit_mode_raw)
+    result.run_toggle_on = requireScalar<bool>(mode, "run_toggle_on", mode_context);
+    result.stop_when_both_toggle_off = requireScalar<bool>(
+        mode,
+        "stop_when_both_toggle_off",
+        mode_context);
+    if (!result.run_toggle_on)
     {
-        throwConfigError(mode_context, "run_raw 和 exit_raw 不能相同");
+        throwConfigError(
+            mode_context + ".run_toggle_on",
+            "必须为 true；厂商 SDK 的 key_mask bit5=1 才表示 ON");
     }
+
+    const auto calibration_source = requireScalar<std::string>(
+        handset_calibration,
+        "source",
+        handset_calibration_context);
+    if (calibration_source != "qnbot_sdk.Hand.GetCalibParams")
+    {
+        throwConfigError(
+            handset_calibration_context + ".source",
+            "必须使用 qnbot_sdk.Hand.GetCalibParams");
+    }
+    const bool handset_calibration_verified = requireScalar<bool>(
+        handset_calibration,
+        "verified",
+        handset_calibration_context);
+    result.left_handset = loadHandsetCalibration(
+        left_handset,
+        left_handset_context,
+        handset_calibration_verified);
+    result.right_handset = loadHandsetCalibration(
+        right_handset,
+        right_handset_context,
+        handset_calibration_verified);
 
     result.executor_control_period = requireMilliseconds(
         timing, "executor_control_period_ms", timing_context);
@@ -417,6 +578,18 @@ TeleopConfig loadTeleopConfig(const std::filesystem::path &path)
             "command_timeout_ms 必须大于 loop_period_ms");
     }
 
+    result.retargeting_verified = requireScalar<bool>(
+        retargeting,
+        "verified",
+        retargeting_context);
+    result.left_source_indices = requireSourceIndices<kArmJointCount>(
+        retargeting,
+        "left_source_indices",
+        retargeting_context);
+    result.right_source_indices = requireSourceIndices<kArmJointCount>(
+        retargeting,
+        "right_source_indices",
+        retargeting_context);
     result.left_scale = requireDoubleArray<kArmJointCount>(
         retargeting, "left_scale", retargeting_context);
     result.left_offset_rad = requireDoubleArray<kArmJointCount>(
@@ -484,6 +657,103 @@ TeleopConfig loadTeleopConfig(const std::filesystem::path &path)
     }
 
     return result;
+}
+
+double normalizeAxis(
+    const std::int16_t raw,
+    const std::int32_t center,
+    const std::int32_t maximum,
+    const std::int32_t minimum,
+    const std::int32_t deadzone_raw)
+{
+    const double centered = static_cast<double>(raw) -
+                            static_cast<double>(center);
+    if (std::abs(centered) <= static_cast<double>(deadzone_raw))
+    {
+        return 0.0;
+    }
+
+    const double range = centered > 0.0
+                             ? static_cast<double>(maximum - center)
+                             : static_cast<double>(center - minimum);
+    return std::clamp(centered / range, -1.0, 1.0);
+}
+
+double normalizeTrigger(
+    const std::int16_t raw,
+    const std::int32_t start,
+    const std::int32_t maximum)
+{
+    if (raw <= start)
+    {
+        return 0.0;
+    }
+    if (raw >= maximum)
+    {
+        return 1.0;
+    }
+    return std::clamp(
+        (static_cast<double>(raw) - static_cast<double>(start)) /
+            static_cast<double>(maximum - start),
+        0.0,
+        1.0);
+}
+
+NormalizedHandset normalizeHandset(
+    const robot::input::exoskeleton::JoystickState &joystick,
+    const HandsetCalibration &calibration)
+{
+    if (!calibration.ready())
+    {
+        throw std::runtime_error(
+            "缺少厂商 Hand.GetCalibParams 校准值，拒绝归一化手柄输入");
+    }
+
+    return NormalizedHandset{
+        normalizeAxis(
+            joystick.raw_x,
+            calibration.jx_center,
+            calibration.jx_max,
+            calibration.jx_min,
+            calibration.deadzone_raw),
+        normalizeAxis(
+            joystick.raw_y,
+            calibration.jy_center,
+            calibration.jy_max,
+            calibration.jy_min,
+            calibration.deadzone_raw),
+        normalizeTrigger(
+            joystick.trigger_raw,
+            calibration.trig_start,
+            calibration.trig_max)};
+}
+
+bool handsetButtonsReleased(
+    const robot::input::exoskeleton::JoystickState &joystick)
+{
+    return joystick.buttonsReleased() && joystick.extendedButtonsReleased();
+}
+
+bool runMode(const ExoskeletonState &state, const TeleopConfig &config)
+{
+    return handsetButtonsReleased(state.left) &&
+           handsetButtonsReleased(state.right) &&
+           state.left.toggleOn() == config.run_toggle_on &&
+           state.right.toggleOn() == config.run_toggle_on;
+}
+
+bool stopMode(const ExoskeletonState &state, const TeleopConfig &config)
+{
+    return !state.left.toggleOn() && !state.right.toggleOn() &&
+           config.stop_when_both_toggle_off;
+}
+
+std::string keyMaskHex(const std::uint16_t value)
+{
+    std::ostringstream output;
+    output << "0x" << std::uppercase << std::hex << std::setw(4)
+           << std::setfill('0') << static_cast<unsigned int>(value);
+    return output.str();
 }
 
 struct TiagoConfigs
@@ -791,6 +1061,19 @@ Arm::JointValues mapArm(
     return result;
 }
 
+std::array<double, kArmJointCount> selectArmSources(
+    const std::array<double, robot::input::exoskeleton::kVendorArmEncoderCount>
+        &source,
+    const std::array<std::size_t, kArmJointCount> &source_indices)
+{
+    std::array<double, kArmJointCount> result{};
+    for (std::size_t index = 0; index < kArmJointCount; ++index)
+    {
+        result[index] = source[source_indices[index]];
+    }
+    return result;
+}
+
 double mapTrigger(double trigger, const TeleopConfig &config)
 {
     const double normalized = std::clamp(trigger, 0.0, 1.0);
@@ -824,24 +1107,32 @@ MappedTargets mapState(
     const robot::tiago::BaseConfig &base_config)
 {
     MappedTargets result;
+    const auto left_handset = normalizeHandset(
+        state.left,
+        config.left_handset);
+    const auto right_handset = normalizeHandset(
+        state.right,
+        config.right_handset);
     result.left_arm = mapArm(
-        state.left_joint_rad,
+        selectArmSources(
+            state.left_arm_joint_rad,
+            config.left_source_indices),
         config.left_scale,
         config.left_offset_rad);
     result.right_arm = mapArm(
-        state.right_joint_rad,
+        selectArmSources(
+            state.right_arm_joint_rad,
+            config.right_source_indices),
         config.right_scale,
         config.right_offset_rad);
-    result.left_gripper = mapGripper(state.left.trigger, config);
-    result.right_gripper = mapGripper(state.right.trigger, config);
+    result.left_gripper = mapGripper(left_handset.trigger, config);
+    result.right_gripper = mapGripper(right_handset.trigger, config);
 
-    const double joystick_x = std::clamp(state.left.x, -1.0, 1.0);
-    const double joystick_y = std::clamp(state.left.y, -1.0, 1.0);
     result.linear_velocity =
-        static_cast<double>(config.linear_axis_sign) * joystick_y *
+        static_cast<double>(config.linear_axis_sign) * left_handset.y *
         config.base_linear_velocity_fraction * base_config.max_linear_velocity;
     result.angular_velocity =
-        static_cast<double>(config.angular_axis_sign) * joystick_x *
+        static_cast<double>(config.angular_axis_sign) * left_handset.x *
         config.base_angular_velocity_fraction * base_config.max_angular_velocity;
     return result;
 }
@@ -960,11 +1251,11 @@ void validateMappedTargets(
 }
 
 bool joystickCentered(
-    const robot::input::exoskeleton::JoystickState &joystick,
+    const NormalizedHandset &handset,
     double threshold)
 {
-    return std::abs(joystick.x) <= threshold &&
-           std::abs(joystick.y) <= threshold;
+    return std::abs(handset.x) <= threshold &&
+           std::abs(handset.y) <= threshold;
 }
 
 std::string readinessReason(
@@ -987,12 +1278,22 @@ std::string readinessReason(
     {
         return "外骨骼数据未连接或已过期";
     }
-    if (state.left_mode_raw != config.run_mode_raw ||
-        state.right_mode_raw != config.run_mode_raw)
+    if (!config.retargeting_verified)
     {
-        return "等待左右外骨骼模式均为遥操作档位";
+        return "等待验证外骨骼 8 槽编码器到 TIAGo 的映射 YAML（retargeting.verified）";
     }
-    if (!joystickCentered(state.left, config.rearm_center_threshold))
+    if (!config.left_handset.ready() || !config.right_handset.ready())
+    {
+        return "等待将厂商 Hand.GetCalibParams 校准值写入配置";
+    }
+    if (!runMode(state, config))
+    {
+        return "等待左右手柄 key_mask bit5 均为 ON 且按键全部松开";
+    }
+    const auto left_handset = normalizeHandset(
+        state.left,
+        config.left_handset);
+    if (!joystickCentered(left_handset, config.rearm_center_threshold))
     {
         return "等待左轮盘回中";
     }
@@ -1253,29 +1554,46 @@ std::vector<std::string> readinessPanelLines(
             std::string{fresh ? "connected | " : "stale | "} +
                 "device=" + exoskeleton.device()));
 
-        const bool mode_ready =
-            fresh && state->left_mode_raw == config.run_mode_raw &&
-            state->right_mode_raw == config.run_mode_raw;
+        const bool mode_ready = fresh && runMode(*state, config);
         std::ostringstream mode_detail;
-        mode_detail << "left=" << modeHex(state->left_mode_raw)
-                    << ", right=" << modeHex(state->right_mode_raw);
+        mode_detail << "left=" << keyMaskHex(state->left.key_mask_raw)
+                    << ", right=" << keyMaskHex(state->right.key_mask_raw)
+                    << ", toggle="
+                    << (state->left.toggleOn() ? "ON" : "OFF") << "/"
+                    << (state->right.toggleOn() ? "ON" : "OFF");
         if (!mode_ready)
         {
-            mode_detail << ", need=" << modeHex(config.run_mode_raw);
+            mode_detail << ", need=bit5 ON + all keys released";
         }
         lines.push_back(panelLine(
             "模式",
             mode_ready ? "OK" : "WAIT",
             mode_detail.str()));
 
-        const bool centered = joystickCentered(
-            state->left,
-            config.rearm_center_threshold);
         std::ostringstream joystick_detail;
-        joystick_detail << std::fixed << std::setprecision(3)
-                        << "x=" << state->left.x
-                        << ", y=" << state->left.y;
-        if (!centered)
+        const bool calibration_ready = config.left_handset.ready();
+        bool centered = false;
+        if (calibration_ready)
+        {
+            const auto left_handset = normalizeHandset(
+                state->left,
+                config.left_handset);
+            centered = joystickCentered(
+                left_handset,
+                config.rearm_center_threshold);
+            joystick_detail << std::fixed << std::setprecision(3)
+                            << "norm x=" << left_handset.x
+                            << ", y=" << left_handset.y
+                            << " | raw x=" << state->left.raw_x
+                            << ", y=" << state->left.raw_y;
+        }
+        else
+        {
+            joystick_detail << "等待 Hand.GetCalibParams | raw x="
+                            << state->left.raw_x << ", y="
+                            << state->left.raw_y;
+        }
+        if (calibration_ready && !centered)
         {
             joystick_detail << ", 请回中";
         }
@@ -1311,8 +1629,15 @@ std::vector<std::string> readinessPanelLines(
 std::vector<std::string> runningPanelLines(
     Exoskeleton &exoskeleton,
     const ExoskeletonState &state,
+    const TeleopConfig &config,
     const MappedTargets &targets)
 {
+    const auto left_handset = normalizeHandset(
+        state.left,
+        config.left_handset);
+    const auto right_handset = normalizeHandset(
+        state.right,
+        config.right_handset);
     std::ostringstream left_arm_detail;
     left_arm_detail << std::fixed << std::setprecision(3)
                     << "SERVO active | q0=" << targets.left_arm[0]
@@ -1326,16 +1651,20 @@ std::vector<std::string> runningPanelLines(
                 << "v=" << targets.linear_velocity
                 << " m/s, w=" << targets.angular_velocity << " rad/s";
     std::ostringstream mode_detail;
-    mode_detail << "left=" << modeHex(state.left_mode_raw)
-                << ", right=" << modeHex(state.right_mode_raw);
+    mode_detail << "left=" << keyMaskHex(state.left.key_mask_raw)
+                << ", right=" << keyMaskHex(state.right.key_mask_raw)
+                << ", toggle=" << (state.left.toggleOn() ? "ON" : "OFF")
+                << "/" << (state.right.toggleOn() ? "ON" : "OFF");
     std::ostringstream gripper_detail;
     gripper_detail << std::fixed << std::setprecision(3)
-                   << "trigger=" << state.left.trigger;
+                   << "norm trigger=" << left_handset.trigger
+                   << " | raw=" << state.left.trigger_raw;
     const std::string left_gripper_detail = gripper_detail.str();
     gripper_detail.str(std::string{});
     gripper_detail.clear();
     gripper_detail << std::fixed << std::setprecision(3)
-                   << "trigger=" << state.right.trigger;
+                   << "norm trigger=" << right_handset.trigger
+                   << " | raw=" << state.right.trigger_raw;
 
     return {
         "========== 外骨骼 -> TIAGo 遥操作状态 ==========",
@@ -1347,8 +1676,10 @@ std::vector<std::string> runningPanelLines(
         panelLine(
             "左轮盘",
             "OK",
-            "x/y=" + std::to_string(state.left.x) + "/" +
-                std::to_string(state.left.y)),
+            "norm x/y=" + std::to_string(left_handset.x) + "/" +
+                std::to_string(left_handset.y) + " | raw=" +
+                std::to_string(state.left.raw_x) + "/" +
+                std::to_string(state.left.raw_y)),
         panelLine("TIAGo反馈", "OK", "Executor feedback active"),
         panelLine("左臂", "OK", left_arm_detail.str()),
         panelLine("右臂", "OK", right_arm_detail.str()),
@@ -1501,14 +1832,6 @@ void sendTeleopTargets(
         targets.angular_velocity);
 }
 
-std::string modeHex(const std::uint8_t value)
-{
-    std::ostringstream output;
-    output << "0x" << std::uppercase << std::hex << std::setw(2)
-           << std::setfill('0') << static_cast<unsigned int>(value);
-    return output.str();
-}
-
 } // namespace
 
 int main(int argc, char **argv)
@@ -1537,8 +1860,19 @@ int main(int argc, char **argv)
                   << (teleop_config.angular_axis_sign > 0 ? "右转" : "左转")
                   << '\n'
                   << "左右扳机: 分别控制左右夹爪，0=张开，1=闭合\n"
-                  << "模式: 运行=" << modeHex(teleop_config.run_mode_raw)
-                  << ", 退出=" << modeHex(teleop_config.exit_mode_raw) << '\n';
+                  << "模式: 按厂商 SDK key_mask bit5，运行="
+                  << (teleop_config.run_toggle_on ? "ON" : "OFF")
+                  << "；两侧均 OFF 时"
+                  << (teleop_config.stop_when_both_toggle_off ? "退出" : "不自动退出")
+                  << "\n"
+                  << "手柄校准: "
+                  << (teleop_config.left_handset.ready() &&
+                              teleop_config.right_handset.ready()
+                          ? "已配置"
+                          : "未配置")
+                  << "；编码器重定向: "
+                  << (teleop_config.retargeting_verified ? "已验证" : "未验证")
+                  << '\n';
 
         if (options.dry_run)
         {
@@ -1703,6 +2037,7 @@ int main(int argc, char **argv)
         status_panel.update(runningPanelLines(
             exoskeleton,
             ready.exoskeleton,
+            teleop_config,
             ready.targets));
 
         bool needs_rearm = false;
@@ -1720,8 +2055,7 @@ int main(int argc, char **argv)
             const auto state = exoskeleton.latestState();
             const bool exit_mode =
                 state &&
-                state->left_mode_raw == teleop_config.exit_mode_raw &&
-                state->right_mode_raw == teleop_config.exit_mode_raw;
+                stopMode(*state, teleop_config);
             if (exit_mode)
             {
                 sendSafeTargets(
@@ -1730,16 +2064,13 @@ int main(int argc, char **argv)
                     right_gripper_velocity_limits,
                     grippers_held);
                 status_panel.finish();
-                std::cout << "检测到外骨骼退出档位，停止遥操作。\n"
+                std::cout << "检测到厂商 key_mask bit5 两侧均为 OFF，停止遥操作。\n"
                           << std::flush;
                 break;
             }
 
             const bool safe_to_follow = state && exoskeleton.stateFresh() &&
-                                         state->left_mode_raw ==
-                                             teleop_config.run_mode_raw &&
-                                         state->right_mode_raw ==
-                                             teleop_config.run_mode_raw;
+                                         runMode(*state, teleop_config);
             if (!safe_to_follow)
             {
                 needs_rearm = true;
@@ -1855,6 +2186,7 @@ int main(int argc, char **argv)
                 status_panel.update(runningPanelLines(
                     exoskeleton,
                     *state,
+                    teleop_config,
                     targets));
                 last_status_update = now;
             }

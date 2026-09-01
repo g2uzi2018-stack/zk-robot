@@ -63,6 +63,30 @@ YAML::Node requireScalar(
     return value;
 }
 
+YAML::Node optionalMap(
+    const YAML::Node &parent,
+    const char *key,
+    const std::string &context)
+{
+    const auto value = parent[key];
+    if (!value)
+    {
+        return {};
+    }
+    if (!value.IsMap())
+    {
+        throwConfigError(
+            context + "." + key,
+            "must be a YAML mapping when present");
+    }
+    return value;
+}
+
+bool hasKey(const YAML::Node &parent, const char *key)
+{
+    return static_cast<bool>(parent[key]);
+}
+
 std::string requireString(
     const YAML::Node &parent,
     const char *key,
@@ -78,6 +102,19 @@ std::string requireString(
             context + "." + key,
             "must be a string: " + std::string(error.what()));
     }
+}
+
+std::string optionalString(
+    const YAML::Node &parent,
+    const char *key,
+    const std::string &default_value,
+    const std::string &context)
+{
+    if (!hasKey(parent, key))
+    {
+        return default_value;
+    }
+    return requireString(parent, key, context);
 }
 
 std::uint64_t requireUnsigned(
@@ -165,6 +202,64 @@ std::chrono::milliseconds requireMilliseconds(
     return std::chrono::milliseconds{static_cast<Rep>(value)};
 }
 
+std::chrono::milliseconds optionalMilliseconds(
+    const YAML::Node &parent,
+    const char *key,
+    const std::chrono::milliseconds default_value,
+    const std::string &context)
+{
+    if (!hasKey(parent, key))
+    {
+        return default_value;
+    }
+    return requireMilliseconds(parent, key, context);
+}
+
+robot::input::exoskeleton::ExoskeletonFrameMode parseFrameMode(
+    const YAML::Node &parent,
+    const char *key,
+    const std::string &context)
+{
+    if (!hasKey(parent, key))
+    {
+        return robot::input::exoskeleton::ExoskeletonFrameMode::Full;
+    }
+
+    const auto text = requireString(parent, key, context);
+    if (text == "auto" || text == "AUTO" || text == "Auto")
+    {
+        return robot::input::exoskeleton::ExoskeletonFrameMode::Auto;
+    }
+
+    std::uint32_t frame_size = 0;
+    const auto parsed = std::from_chars(
+        text.data(),
+        text.data() + text.size(),
+        frame_size,
+        10);
+    if (parsed.ec != std::errc{} ||
+        parsed.ptr != text.data() + text.size())
+    {
+        throwConfigError(
+            context + "." + key,
+            "must be auto, 51, 91, or 131");
+    }
+
+    switch (frame_size)
+    {
+    case robot::input::exoskeleton::kLegacyBaseFrameSize:
+        return robot::input::exoskeleton::ExoskeletonFrameMode::Base;
+    case robot::input::exoskeleton::kLegacyTorsoImuFrameSize:
+        return robot::input::exoskeleton::ExoskeletonFrameMode::TorsoImu;
+    case robot::input::exoskeleton::kLegacyFullFrameSize:
+        return robot::input::exoskeleton::ExoskeletonFrameMode::Full;
+    default:
+        throwConfigError(
+            context + "." + key,
+            "must be auto, 51, 91, or 131");
+    }
+}
+
 } // namespace
 
 namespace robot::input::exoskeleton
@@ -183,39 +278,72 @@ ExoskeletonConfig loadExoskeletonConfig(
     const auto exoskeleton = requireMap(root, "exoskeleton", context);
     const auto exoskeleton_context = context + ".exoskeleton";
 
-    ExoskeletonConfig result;
-    result.usb_vid = requireUsbId(exoskeleton, "usb_vid", exoskeleton_context);
-    result.usb_pid = requireUsbId(exoskeleton, "usb_pid", exoskeleton_context);
-    result.match_vid_only = requireBool(
+    YAML::Node serial = optionalMap(
         exoskeleton,
-        "match_vid_only",
+        "serial",
         exoskeleton_context);
+    if (!serial)
+    {
+        serial = exoskeleton;
+    }
+    const auto serial_context = exoskeleton_context + ".serial";
+
+    YAML::Node telemetry = optionalMap(
+        exoskeleton,
+        "telemetry",
+        exoskeleton_context);
+    if (!telemetry)
+    {
+        telemetry = exoskeleton;
+    }
+    const auto telemetry_context = exoskeleton_context + ".telemetry";
+
+    ExoskeletonConfig result;
+    result.device = optionalString(serial, "device", "", serial_context);
+    result.usb_vid = requireUsbId(serial, "usb_vid", serial_context);
+    result.usb_pid = requireUsbId(serial, "usb_pid", serial_context);
+    result.match_vid_only = requireBool(
+        serial,
+        "match_vid_only",
+        serial_context);
 
     const auto baudrate = requireUnsigned(
-        exoskeleton,
+        serial,
         "baudrate",
-        exoskeleton_context);
+        serial_context);
     if (baudrate == 0 || baudrate > std::numeric_limits<std::uint32_t>::max())
     {
         throwConfigError(
-            exoskeleton_context + ".baudrate",
+            serial_context + ".baudrate",
             "must fit in a positive uint32_t");
     }
     result.baudrate = static_cast<std::uint32_t>(baudrate);
-    result.stale_timeout = requireMilliseconds(
-        exoskeleton,
-        "stale_timeout_ms",
-        exoskeleton_context);
-    result.reconnect_interval = requireMilliseconds(
-        exoskeleton,
+    result.poll_timeout = optionalMilliseconds(
+        serial,
+        "poll_timeout_ms",
+        std::chrono::milliseconds{20},
+        serial_context);
+    result.reconnect_interval = optionalMilliseconds(
+        serial,
         "reconnect_interval_ms",
-        exoskeleton_context);
+        std::chrono::milliseconds{1000},
+        serial_context);
+    result.stale_timeout = optionalMilliseconds(
+        telemetry,
+        "stale_timeout_ms",
+        std::chrono::milliseconds{100},
+        telemetry_context);
+    result.frame_mode = parseFrameMode(
+        telemetry,
+        "frame_size",
+        telemetry_context);
     return result;
 }
 
 Exoskeleton::Exoskeleton(ExoskeletonConfig config)
     : config_(std::move(config)),
-      transport_(config_.baudrate)
+      transport_(config_.baudrate),
+      decoder_(config_.frame_mode)
 {
     if (config_.usb_vid == 0)
     {
@@ -228,6 +356,10 @@ Exoskeleton::Exoskeleton(ExoskeletonConfig config)
     if (config_.baudrate == 0)
     {
         throw std::invalid_argument("Exoskeleton baudrate must be positive");
+    }
+    if (config_.poll_timeout <= std::chrono::milliseconds::zero())
+    {
+        throw std::invalid_argument("Exoskeleton poll timeout must be positive");
     }
     if (config_.stale_timeout <= std::chrono::milliseconds::zero())
     {
@@ -355,6 +487,7 @@ void Exoskeleton::consumeBytes(
         statistics_.checksum_failures = decoder_statistics.checksum_failures;
         statistics_.tail_failures = decoder_statistics.tail_failures;
         statistics_.discarded_bytes = decoder_statistics.discarded_bytes;
+        statistics_.length_switches = decoder_statistics.length_switches;
     }
 
     for (const auto &frame : frames)
@@ -376,7 +509,6 @@ void Exoskeleton::consumeBytes(
 
 void Exoskeleton::run()
 {
-    constexpr auto poll_timeout = std::chrono::milliseconds{50};
     std::array<std::uint8_t, 4096> read_buffer{};
     const SerialDeviceSelector selector{
         config_.usb_vid,
@@ -389,14 +521,23 @@ void Exoskeleton::run()
         {
             connected_.store(false);
             decoder_.resetBuffer();
-            const auto devices = enumerateSerialDevices(selector);
-            if (devices.size() != 1)
+            std::string device;
+            if (!config_.device.empty() && config_.device != "auto")
             {
-                waitForReconnect();
-                continue;
+                device = config_.device;
+            }
+            else
+            {
+                const auto devices = enumerateSerialDevices(selector);
+                if (devices.size() != 1)
+                {
+                    waitForReconnect();
+                    continue;
+                }
+                device = devices.front().device_path.string();
             }
 
-            if (!transport_.open(devices.front().device_path.string()))
+            if (!transport_.open(device))
             {
                 waitForReconnect();
                 continue;
@@ -410,7 +551,7 @@ void Exoskeleton::run()
             }
         }
 
-        const auto poll_result = transport_.poll(poll_timeout);
+        const auto poll_result = transport_.poll(config_.poll_timeout);
         if (!running_.load())
         {
             break;

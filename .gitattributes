@@ -1,2 +1,0 @@
-T170C-LX-AGX-URDF-1.0/meshes/WAIST_Y_S.STL filter=lfs diff=lfs merge=lfs -text
-T170C-LX-AGX-URDF-1.0/meshes/base_link.STL filter=lfs diff=lfs merge=lfs -text

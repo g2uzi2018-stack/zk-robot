@@ -1,0 +1,1327 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 可以在MUJOCO中直接打开的URDF文件 -->
+<robot
+  name="T170C-V1.1-URDF-1.0">
+  <mujoco>
+    <compiler
+      meshdir="../meshes/"
+      balanceinertia="true"
+      discardvisual="false" />
+  </mujoco>
+  <link
+    name="base_link">
+    <inertial>
+      <origin
+        xyz="0.09335202 0.01343684 -0.11600987"
+        rpy="0 0 0" />
+      <mass
+        value="31.746449" />
+      <inertia
+        ixx="0.91586"
+        ixy="0.055139"
+        ixz="0.29362"
+        iyy="1.7269"
+        iyz="-0.039149"
+        izz="1.7977" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://t170c_lx_agx_urdf/meshes/base_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.79216 0.81961 0.93333 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://t170c_lx_agx_urdf/meshes/base_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <link
+    name="Fold_R_S">
+    <inertial>
+      <origin
+        xyz="0.1787242 0.00592535 -0.00044741"
+        rpy="0 0 0" />
+      <mass
+        value="7.0446045" />
+      <inertia
+        ixx="0.018862"
+        ixy="-0.0012779"
+        ixz="0.00015359"
+        iyy="0.031009"
+        iyz="-0.00016515"
+        izz="0.032075" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://t170c_lx_agx_urdf/meshes/Fold_R_S.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.89804 0.91765 0.92941 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://t170c_lx_agx_urdf/meshes/Fold_R_S.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="Fold_R"
+    type="revolute">
+    <origin
+      xyz="0 0 0"
+      rpy="0 0 0" />
+    <parent
+      link="base_link" />
+    <child
+      link="Fold_R_S" />
+    <axis
+      xyz="1 0 0" />
+    <limit
+      lower="-0.17"
+      upper="0.17"
+      effort="497"
+      velocity="2.3038" />
+  </joint>
+  <link
+    name="Fold_P1_S">
+    <inertial>
+      <origin
+        xyz="0.00299867 0.00785519 0.2153831"
+        rpy="0 0 0" />
+      <mass
+        value="8.102632" />
+      <inertia
+        ixx="0.13682"
+        ixy="0.00020671"
+        ixz="0.00016408"
+        iyy="0.12431"
+        iyz="-0.0030544"
+        izz="0.036635" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://t170c_lx_agx_urdf/meshes/Fold_P1_S.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.86667 0.86667 0.8902 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://t170c_lx_agx_urdf/meshes/Fold_P1_S.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="Fold_P1"
+    type="revolute">
+    <origin
+      xyz="0.205800362959768 0 0"
+      rpy="0 0 0" />
+    <parent
+      link="Fold_R_S" />
+    <child
+      link="Fold_P1_S" />
+    <axis
+      xyz="0 1 0" />
+    <limit
+      lower="0"
+      upper="1.57"
+      effort="267"
+      velocity="4.6077" />
+  </joint>
+  <link
+    name="Fold_P2_S">
+    <inertial>
+      <origin
+        xyz="0.00606656 0.00079569 0.24327766"
+        rpy="0 0 0" />
+      <mass
+        value="9.519605" />
+      <inertia
+        ixx="0.2668"
+        ixy="0.00011325"
+        ixz="0.0090022"
+        iyy="0.2228"
+        iyz="0.0070974"
+        izz="0.078112" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://t170c_lx_agx_urdf/meshes/Fold_P2_S.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.64706 0.61961 0.58824 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://t170c_lx_agx_urdf/meshes/Fold_P2_S.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="Fold_P2"
+    type="revolute">
+    <origin
+      xyz="0 0 0.3"
+      rpy="0 0 0" />
+    <parent
+      link="Fold_P1_S" />
+    <child
+      link="Fold_P2_S" />
+    <axis
+      xyz="0 1 0" />
+    <limit
+      lower="-2.76"
+      upper="0"
+      effort="267"
+      velocity="4.6077" />
+  </joint>
+  <link
+    name="Fold_P3_S">
+    <inertial>
+      <origin
+        xyz="0 0.00623616 0.00912471"
+        rpy="0 0 0" />
+      <mass
+        value="2.2654317" />
+      <inertia
+        ixx="0.0044512"
+        ixy="0"
+        ixz="-3E-08"
+        iyy="0.0040961"
+        iyz="0.00013219"
+        izz="0.0031422" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://t170c_lx_agx_urdf/meshes/Fold_P3_S.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.86667 0.86667 0.8902 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://t170c_lx_agx_urdf/meshes/Fold_P3_S.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="Fold_P3"
+    type="revolute">
+    <origin
+      xyz="0 0 0.422520825602014"
+      rpy="0 0 0" />
+    <parent
+      link="Fold_P2_S" />
+    <child
+      link="Fold_P3_S" />
+    <axis
+      xyz="0 -1 0" />
+    <limit
+      lower="-1.48"
+      upper="0"
+      effort="69"
+      velocity="6.3879" />
+  </joint>
+  <link
+    name="WAIST_Y_S">
+    <inertial>
+      <origin
+        xyz="-0.02500623 0.00158718 0.13835025"
+        rpy="0 0 0" />
+      <mass
+        value="12.298255" />
+      <inertia
+        ixx="0.17704"
+        ixy="0.0016441"
+        ixz="-0.0072848"
+        iyy="0.17508"
+        iyz="0.00057346"
+        izz="0.10694" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://t170c_lx_agx_urdf/meshes/WAIST_Y_S.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.89804 0.91765 0.92941 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://t170c_lx_agx_urdf/meshes/WAIST_Y_S.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="WAIST_Y"
+    type="revolute">
+    <origin
+      xyz="0 0 0.129499999999999"
+      rpy="0 0 0" />
+    <parent
+      link="Fold_P3_S" />
+    <child
+      link="WAIST_Y_S" />
+    <axis
+      xyz="0 0 -1" />
+    <limit
+      lower="-1.57"
+      upper="1.57"
+      effort="69"
+      velocity="6.3879" />
+  </joint>
+  <link
+    name="L_SHOULDER_P_S">
+    <inertial>
+      <origin
+        xyz="-0.00459107 0.09320427 2.25E-06"
+        rpy="0 0 0" />
+      <mass
+        value="0.96131632" />
+      <inertia
+        ixx="0.00090212"
+        ixy="2.958E-05"
+        ixz="0"
+        iyy="0.00072135"
+        iyz="-3E-08"
+        izz="0.0009211" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://t170c_lx_agx_urdf/meshes/L_SHOULDER_P_S.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.86667 0.86667 0.8902 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://t170c_lx_agx_urdf/meshes/L_SHOULDER_P_S.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="L_SHOULDER_P"
+    type="revolute">
+    <origin
+      xyz="0 0.0921750000000002 0.246999999999999"
+      rpy="0 0 0" />
+    <parent
+      link="WAIST_Y_S" />
+    <child
+      link="L_SHOULDER_P_S" />
+    <axis
+      xyz="0 1 0" />
+    <limit
+      lower="-3.14"
+      upper="3.14"
+      effort="42"
+      velocity="7.12" />
+  </joint>
+  <link
+    name="L_SHOULDER_R_S">
+    <inertial>
+      <origin
+        xyz="0.00093615 0.08890963 -1.455E-05"
+        rpy="0 0 0" />
+      <mass
+        value="0.86209493" />
+      <inertia
+        ixx="0.0021144"
+        ixy="9.163E-05"
+        ixz="-4.5E-07"
+        iyy="0.00089431"
+        iyz="-3.9E-07"
+        izz="0.0023649" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://t170c_lx_agx_urdf/meshes/L_SHOULDER_R_S.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.86667 0.86667 0.8902 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://t170c_lx_agx_urdf/meshes/L_SHOULDER_R_S.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="L_SHOULDER_R"
+    type="revolute">
+    <origin
+      xyz="0 0.0988250000000059 0"
+      rpy="0 0 0" />
+    <parent
+      link="L_SHOULDER_P_S" />
+    <child
+      link="L_SHOULDER_R_S" />
+    <axis
+      xyz="1 0 0" />
+    <limit
+      lower="-1.57"
+      upper="1.57"
+      effort="42"
+      velocity="7.12" />
+  </joint>
+  <link
+    name="L_SHOULDER_Y_S">
+    <inertial>
+      <origin
+        xyz="-0.00171186 0.12462239 -0.00223631"
+        rpy="0 0 0" />
+      <mass
+        value="0.92681372" />
+      <inertia
+        ixx="0.002623"
+        ixy="-5.734E-05"
+        ixz="2.65E-06"
+        iyy="0.00069386"
+        iyz="5.067E-05"
+        izz="0.0026017" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://t170c_lx_agx_urdf/meshes/L_SHOULDER_Y_S.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.86667 0.86667 0.8902 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://t170c_lx_agx_urdf/meshes/L_SHOULDER_Y_S.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="L_SHOULDER_Y"
+    type="revolute">
+    <origin
+      xyz="0 0.114049999999992 0"
+      rpy="0 0 0" />
+    <parent
+      link="L_SHOULDER_R_S" />
+    <child
+      link="L_SHOULDER_Y_S" />
+    <axis
+      xyz="0 1 0" />
+    <limit
+      lower="-3.14"
+      upper="3.14"
+      effort="23"
+      velocity="10.16" />
+  </joint>
+  <link
+    name="L_ELBOW_Y_S">
+    <inertial>
+      <origin
+        xyz="0.00192016 0.05898775 0.00115056"
+        rpy="0 0 0" />
+      <mass
+        value="0.65776738" />
+      <inertia
+        ixx="0.00098477"
+        ixy="8.18E-06"
+        ixz="-1.41E-06"
+        iyy="0.00060038"
+        iyz="3.54E-05"
+        izz="0.00076337" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://t170c_lx_agx_urdf/meshes/L_ELBOW_Y_S.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.86667 0.86667 0.8902 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://t170c_lx_agx_urdf/meshes/L_ELBOW_Y_S.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="L_ELBOW_Y"
+    type="revolute">
+    <origin
+      xyz="0 0.155950000000004 0"
+      rpy="0 0 0" />
+    <parent
+      link="L_SHOULDER_Y_S" />
+    <child
+      link="L_ELBOW_Y_S" />
+    <axis
+      xyz="0 0 1" />
+    <limit
+      lower="-2.43"
+      upper="0.79"
+      effort="23"
+      velocity="10.16" />
+  </joint>
+  <link
+    name="L_WRIST_P_S">
+    <inertial>
+      <origin
+        xyz="-4.62E-06 0.08396362 0.01673454"
+        rpy="0 0 0" />
+      <mass
+        value="0.55599118" />
+      <inertia
+        ixx="0.0011935"
+        ixy="-5E-08"
+        ixz="-7E-08"
+        iyy="0.00042118"
+        iyz="-0.0002137"
+        izz="0.0010541" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://t170c_lx_agx_urdf/meshes/L_WRIST_P_S.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.86667 0.86667 0.8902 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://t170c_lx_agx_urdf/meshes/L_WRIST_P_S.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="L_WRIST_P"
+    type="revolute">
+    <origin
+      xyz="0 0.0738999999999985 0"
+      rpy="0 0 0" />
+    <parent
+      link="L_ELBOW_Y_S" />
+    <child
+      link="L_WRIST_P_S" />
+    <axis
+      xyz="0 1 0" />
+    <limit
+      lower="-3.14"
+      upper="3.14"
+      effort="8.3"
+      velocity="8.38" />
+  </joint>
+  <link
+    name="L_WRIST_Y_S">
+    <inertial>
+      <origin
+        xyz="-0.00354049 -0.00011593 0.00189783"
+        rpy="0 0 0" />
+      <mass
+        value="0.27349198" />
+      <inertia
+        ixx="7.516E-05"
+        ixy="-7.5E-07"
+        ixz="-5.43E-06"
+        iyy="0.00012195"
+        iyz="-1.3E-07"
+        izz="0.0001" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://t170c_lx_agx_urdf/meshes/L_WRIST_Y_S.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.86667 0.86667 0.8902 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://t170c_lx_agx_urdf/meshes/L_WRIST_Y_S.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="L_WRIST_Y"
+    type="revolute">
+    <origin
+      xyz="0 0.176099999999993 0"
+      rpy="0 0 0" />
+    <parent
+      link="L_WRIST_P_S" />
+    <child
+      link="L_WRIST_Y_S" />
+    <axis
+      xyz="0 0 1" />
+    <limit
+      lower="-0.94"
+      upper="0.94"
+      effort="3.3"
+      velocity="9.42" />
+  </joint>
+  <link
+    name="L_WRIST_R_S">
+    <inertial>
+      <origin
+        xyz="0.00168301 0.07121375 -0.01969652"
+        rpy="0 0 0" />
+      <mass
+        value="0.22354676" />
+      <inertia
+        ixx="0.00048452"
+        ixy="2.41E-05"
+        ixz="-7.27E-06"
+        iyy="0.00032784"
+        iyz="9.596E-05"
+        izz="0.00036563" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://t170c_lx_agx_urdf/meshes/L_WRIST_R_S.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.89804 0.91765 0.92941 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://t170c_lx_agx_urdf/meshes/L_WRIST_R_S.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="L_WRIST_R"
+    type="revolute">
+    <origin
+      xyz="0 0 -0.00100000000000611"
+      rpy="0 0 0" />
+    <parent
+      link="L_WRIST_Y_S" />
+    <child
+      link="L_WRIST_R_S" />
+    <axis
+      xyz="1 0 0" />
+    <limit
+      lower="-2"
+      upper="1.48"
+      effort="3.3"
+      velocity="9.42" />
+  </joint>
+  <link
+    name="R_SHOULDER_P_S">
+    <inertial>
+      <origin
+        xyz="-0.00459103 -0.09320423 1.98E-06"
+        rpy="0 0 0" />
+      <mass
+        value="0.96131486" />
+      <inertia
+        ixx="0.00090212"
+        ixy="-2.958E-05"
+        ixz="-1E-08"
+        iyy="0.00072135"
+        iyz="4E-08"
+        izz="0.0009211" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://t170c_lx_agx_urdf/meshes/R_SHOULDER_P_S.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.86667 0.86667 0.8902 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://t170c_lx_agx_urdf/meshes/R_SHOULDER_P_S.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="R_SHOULDER_P"
+    type="revolute">
+    <origin
+      xyz="0 -0.0921749999999999 0.247000000000001"
+      rpy="0 0 0" />
+    <parent
+      link="WAIST_Y_S" />
+    <child
+      link="R_SHOULDER_P_S" />
+    <axis
+      xyz="0 -1 0" />
+    <limit
+      lower="-3.14"
+      upper="3.14"
+      effort="42"
+      velocity="7.12" />
+  </joint>
+  <link
+    name="R_SHOULDER_R_S">
+    <inertial>
+      <origin
+        xyz="0.00093728 -0.08890393 -1.31E-05"
+        rpy="0 0 0" />
+      <mass
+        value="0.86214408" />
+      <inertia
+        ixx="0.0021149"
+        ixy="-9.163E-05"
+        ixz="-4.2E-07"
+        iyy="0.00089443"
+        iyz="3.7E-07"
+        izz="0.0023655" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://t170c_lx_agx_urdf/meshes/R_SHOULDER_R_S.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.86667 0.86667 0.8902 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://t170c_lx_agx_urdf/meshes/R_SHOULDER_R_S.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="R_SHOULDER_R"
+    type="revolute">
+    <origin
+      xyz="0 -0.0988249999999985 0"
+      rpy="0 0 0" />
+    <parent
+      link="R_SHOULDER_P_S" />
+    <child
+      link="R_SHOULDER_R_S" />
+    <axis
+      xyz="1 0 0" />
+    <limit
+      lower="-1.57"
+      upper="1.57"
+      effort="42"
+      velocity="7.12" />
+  </joint>
+  <link
+    name="R_SHOULDER_Y_S">
+    <inertial>
+      <origin
+        xyz="-0.00171147 -0.12462021 -0.00223645"
+        rpy="0 0 0" />
+      <mass
+        value="0.92679273" />
+      <inertia
+        ixx="0.0026232"
+        ixy="5.725E-05"
+        ixz="2.66E-06"
+        iyy="0.0006939"
+        iyz="-5.073E-05"
+        izz="0.0026019" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://t170c_lx_agx_urdf/meshes/R_SHOULDER_Y_S.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.8902 0.8902 0.91373 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://t170c_lx_agx_urdf/meshes/R_SHOULDER_Y_S.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="R_SHOULDER_Y"
+    type="revolute">
+    <origin
+      xyz="0 -0.11405 0"
+      rpy="0 0 0" />
+    <parent
+      link="R_SHOULDER_R_S" />
+    <child
+      link="R_SHOULDER_Y_S" />
+    <axis
+      xyz="0 -1 0" />
+    <limit
+      lower="-3.14"
+      upper="3.14"
+      effort="23"
+      velocity="10.16" />
+  </joint>
+  <link
+    name="R_ELBOW_Y_S">
+    <inertial>
+      <origin
+        xyz="0.00523896 -0.05877435 0.00113155"
+        rpy="0 0 0" />
+      <mass
+        value="0.65792064" />
+      <inertia
+        ixx="0.00098511"
+        ixy="1.317E-05"
+        ixz="7E-07"
+        iyy="0.00060107"
+        iyz="-3.47E-05"
+        izz="0.00076394" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://t170c_lx_agx_urdf/meshes/R_ELBOW_Y_S.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.86667 0.86667 0.8902 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://t170c_lx_agx_urdf/meshes/R_ELBOW_Y_S.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="R_ELBOW_Y"
+    type="revolute">
+    <origin
+      xyz="0 -0.15595 0"
+      rpy="0 0 0" />
+    <parent
+      link="R_SHOULDER_Y_S" />
+    <child
+      link="R_ELBOW_Y_S" />
+    <axis
+      xyz="0 0 1" />
+    <limit
+      lower="-0.79"
+      upper="2.43"
+      effort="23"
+      velocity="10.16" />
+  </joint>
+  <link
+    name="R_WRIST_P_S">
+    <inertial>
+      <origin
+        xyz="0.00490662 -0.08722971 0.01673262"
+        rpy="0 0 0" />
+      <mass
+        value="0.55596458" />
+      <inertia
+        ixx="0.0011943"
+        ixy="4.025E-05"
+        ixz="-1.21E-05"
+        iyy="0.00041949"
+        iyz="0.00021343"
+        izz="0.0010533" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://t170c_lx_agx_urdf/meshes/R_WRIST_P_S.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.86667 0.86667 0.8902 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://t170c_lx_agx_urdf/meshes/R_WRIST_P_S.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="R_WRIST_P"
+    type="revolute">
+    <origin
+      xyz="0.00396231224939386 -0.0703885649919785 0"
+      rpy="0 0 0" />
+    <parent
+      link="R_ELBOW_Y_S" />
+    <child
+      link="R_WRIST_P_S" />
+    <axis
+      xyz="0 -1 0" />
+    <limit
+      lower="-3.14"
+      upper="3.14"
+      effort="8.3"
+      velocity="8.38" />
+  </joint>
+  <link
+    name="R_WRIST_Y_S">
+    <inertial>
+      <origin
+        xyz="-0.00347382 -0.00031892 0.00196447"
+        rpy="0 0 0" />
+      <mass
+        value="0.27303316" />
+      <inertia
+        ixx="7.532E-05"
+        ixy="-3.44E-06"
+        ixz="-4.97E-06"
+        iyy="0.000121"
+        iyz="-4.2E-07"
+        izz="9.955E-05" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://t170c_lx_agx_urdf/meshes/R_WRIST_Y_S.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.86667 0.86667 0.8902 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://t170c_lx_agx_urdf/meshes/R_WRIST_Y_S.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="R_WRIST_Y"
+    type="revolute">
+    <origin
+      xyz="0.0100884404103541 -0.179216275405202 0"
+      rpy="0 0 0" />
+    <parent
+      link="R_WRIST_P_S" />
+    <child
+      link="R_WRIST_Y_S" />
+    <axis
+      xyz="0 0 1" />
+    <limit
+      lower="-0.94"
+      upper="0.94"
+      effort="3.3"
+      velocity="9.42" />
+  </joint>
+  <link
+    name="R_WRIST_R_S">
+    <inertial>
+      <origin
+        xyz="0.00552205 -0.07105633 -0.01945596"
+        rpy="0 0 0" />
+      <mass
+        value="0.22354676" />
+      <inertia
+        ixx="0.0004905"
+        ixy="-1.616E-05"
+        ixz="-1.75E-06"
+        iyy="0.00032773"
+        iyz="-9.435E-05"
+        izz="0.00036641" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://t170c_lx_agx_urdf/meshes/R_WRIST_R_S.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.89804 0.91765 0.92941 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://t170c_lx_agx_urdf/meshes/R_WRIST_R_S.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="R_WRIST_R"
+    type="revolute">
+    <origin
+      xyz="0 0 -0.00100000000002343"
+      rpy="0 0 0" />
+    <parent
+      link="R_WRIST_Y_S" />
+    <child
+      link="R_WRIST_R_S" />
+    <axis
+      xyz="1 0 0" />
+    <limit
+      lower="-1.48"
+      upper="2"
+      effort="3.3"
+      velocity="9.42" />
+  </joint>
+  <link
+    name="NECK_Y_S">
+    <inertial>
+      <origin
+        xyz="-1.023E-05 0.01223575 0.09604674"
+        rpy="0 0 0" />
+      <mass
+        value="0.38401594" />
+      <inertia
+        ixx="0.00040572"
+        ixy="4E-08"
+        ixz="2.8E-07"
+        iyy="0.00032666"
+        iyz="-6.265E-05"
+        izz="0.00018286" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://t170c_lx_agx_urdf/meshes/NECK_Y_S.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.86667 0.86667 0.8902 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://t170c_lx_agx_urdf/meshes/NECK_Y_S.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="NECK_Y"
+    type="revolute">
+    <origin
+      xyz="0 0 0.246999999999999"
+      rpy="0 0 0" />
+    <parent
+      link="WAIST_Y_S" />
+    <child
+      link="NECK_Y_S" />
+    <axis
+      xyz="0 0 1" />
+    <limit
+      lower="-1.57"
+      upper="1.57"
+      effort="8.3"
+      velocity="8.38" />
+  </joint>
+  <link
+    name="NECK_P_S">
+    <inertial>
+      <origin
+        xyz="-0.00277948 0.00372369 1.594E-05"
+        rpy="0 0 0" />
+      <mass
+        value="0.2708254" />
+      <inertia
+        ixx="7.771E-05"
+        ixy="-4.47E-06"
+        ixz="-1E-07"
+        iyy="9.348E-05"
+        iyz="2E-08"
+        izz="0.00011992" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://t170c_lx_agx_urdf/meshes/NECK_P_S.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.86667 0.86667 0.8902 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://t170c_lx_agx_urdf/meshes/NECK_P_S.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="NECK_P"
+    type="revolute">
+    <origin
+      xyz="0 0 0.162000000000001"
+      rpy="0 0 0" />
+    <parent
+      link="NECK_Y_S" />
+    <child
+      link="NECK_P_S" />
+    <axis
+      xyz="0 1 0" />
+    <limit
+      lower="-0.52"
+      upper="0.52"
+      effort="3.3"
+      velocity="9.42" />
+  </joint>
+  <link
+    name="NECK_R_S">
+    <inertial>
+      <origin
+        xyz="0.36024716 0.01282047 0.07588022"
+        rpy="0 0 0" />
+      <mass
+        value="3.4796767" />
+      <inertia
+        ixx="0.014747"
+        ixy="-0.0070072"
+        ixz="0.011679"
+        iyy="0.18703"
+        iyz="-0.00075503"
+        izz="0.18166" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://t170c_lx_agx_urdf/meshes/NECK_R_S.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.89804 0.91765 0.92941 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://t170c_lx_agx_urdf/meshes/NECK_R_S.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="NECK_R"
+    type="revolute">
+    <origin
+      xyz="0 0 0"
+      rpy="0 0 0" />
+    <parent
+      link="NECK_P_S" />
+    <child
+      link="NECK_R_S" />
+    <axis
+      xyz="1 0 0" />
+    <limit
+      lower="-0.52"
+      upper="0.52"
+      effort="3.3"
+      velocity="9.42" />
+  </joint>
+</robot>

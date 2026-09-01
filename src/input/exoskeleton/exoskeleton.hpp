@@ -20,7 +20,7 @@ namespace robot::input::exoskeleton
 struct ExoskeletonConfig
 {
     // 非空且不是 "auto" 时直接使用该串口路径；"auto" 或空字符串时，
-    // 通过 USB VID:PID 枚举唯一设备。显式路径与厂商 QnbotClient 的
+    // 通过 USB VID:PID 枚举唯一设备。显式路径与官方读取器的
     // port 参数对应。
     std::string device;
     std::uint16_t usb_vid{0x0483};

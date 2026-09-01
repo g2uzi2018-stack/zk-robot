@@ -16,7 +16,7 @@ src/ti5/joint/       TI5 单个物理关节、坐标换算和目标限位
 src/ti5/hand/        傲意灵巧手独立协议
 tools/               需要明确操作、可能连接实体机器人的调试工具
 tests/               不连接实体机器人的自动测试
-qnbot-exoskeleton-SDK/ 厂商 Python SDK 原始快照，不参与 CMake 构建
+doc/reference/        官方外骨骼读取器参考快照
 ```
 
 后续 TI5 的 `arm/head/controller/executor` 将参考 `src/tiago/` 的现有层级继续
@@ -60,26 +60,21 @@ ctest --test-dir build --output-on-failure
 
 ## 外骨骼控制
 
-厂商资料包的主入口是 `qnbot-exoskeleton-SDK/qnbot_sdk_v1.2/qnbot_sdk.py`：
-`QnbotClient`/`QnbotStreamParser` 负责 QnTP 请求响应和 51/91/131 字节 legacy
-遥测流。仓库中的 C++ `exoskeleton_input` 按该 SDK 的 legacy 数据模型提供确定性的
-实时输入；厂商 Python SDK 继续用于版本/能力查询、手柄和 IMU 校准、Wireless、
-Haptics 及 DFU。旧的 `remote_manipulator_data_reader.py` 不作为 C++ 控制链路。
+外骨骼协议、编码器弧度换算、现场槽位/正方向记录和 TI5 重定向边界见
+`doc/exoskeleton_development.md`。官方 `remote_manipulator_data_reader.py`
+的原始快照位于 `doc/reference/`，仅用于核对协议和换算公式；C++
+`exoskeleton_input` 和项目内 Python 监视器不再依赖完整厂商 SDK。
 
-先用厂商 SDK 检查设备，再做只读监测：
+先做只读监测：
 
 ```bash
-python3 tools/qnbot_vendor_probe.py \
-  --port /dev/exoskeleton \
-  --show-topology \
-  --show-calibration
+python3 tools/exoskeleton_joint_monitor.py --port /dev/ttyACM0
 cmake --build build --target exoskeleton_monitor exoskeleton_tiago_teleop -j2
 ./build/exoskeleton_monitor config/exoskeleton.yaml
 ```
 
-`--show-calibration` 输出的 `Hand.GetCalibParams` 数值用于填写
-`config/exoskeleton_tiago_teleop.yaml`。厂商 SDK 不定义 8 个编码器槽位对应的
-人体/机器人关节，因此还必须现场逐轴标定 `retargeting`。在
+厂商资料没有定义 8 个编码器槽位对应的人体/机器人关节，因此还必须现场逐轴标定
+`retargeting`。在
 `handset_calibration.verified` 和 `retargeting.verified` 都改为 `true` 前，TIAGo
 遥操作的 `--confirm` 会停在等待状态，不能向实体机器人下发目标。
 

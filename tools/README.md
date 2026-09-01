@@ -14,27 +14,21 @@
 - `exoskeleton_monitor.cpp`：只读打开外骨骼并显示遥测，不打开机器人 CAN。
 - `exoskeleton_tiago_teleop.cpp`：将外骨骼双臂、扳机和左手柄映射到 TIAGo；
   默认排除在普通构建之外，必须显式构建并传入 `--confirm`。
-- `qnbot_vendor_probe.py`：调用厂商 `QnbotClient` 做版本、能力、拓扑、8 槽 legacy
-  遥测和 `Hand.GetCalibParams` 检查；
-  与 C++ 监测器或遥操作程序不能同时占用串口。
+- `exoskeleton_joint_monitor.py`：固定布局显示左右臂 8 个官方编码器槽位，
+  只更新数值，内置 legacy 帧解析，便于穿戴状态下逐轴标定；不连接 TIAGo。
 
 外骨骼联调建议先运行：
 
 ```bash
-python3 tools/qnbot_vendor_probe.py \
-  --port /dev/exoskeleton \
-  --show-topology \
-  --show-calibration
+python3 tools/exoskeleton_joint_monitor.py --port /dev/ttyACM0
 cmake --build build --target exoskeleton_monitor exoskeleton_tiago_teleop -j2
 ./build/exoskeleton_monitor config/exoskeleton.yaml
 ```
 
-厂商 SDK 目录 `qnbot-exoskeleton-SDK/` 保持原样作为设备协议和维护工具的来源，
-不直接加入 CMake；C++ 实时路径只复现其中 legacy 遥测解析，不把 Python 回调线程
-放进机器人控制周期。需要 QnTP 校准、无线、触觉或 DFU 时使用厂商 CLI/探测脚本。
-将探测器打印的 `Hand.GetCalibParams` 填入遥操作 YAML，并完成 8 槽到 TIAGo 7 关节
-的现场逐轴标定；只有 `handset_calibration.verified=true` 和
-`retargeting.verified=true` 同时成立时，遥操作才会进入实体控制。
+官方读取器快照、协议布局和弧度换算见 `doc/exoskeleton_development.md`。
+当前 Python 监视器和 C++ 实时路径都不依赖完整厂商 SDK；需要 QnTP 校准、无线、
+触觉、DFU 或厂商 3D 工具时，应向厂商索取对应版本的独立工具。
+完成 8 槽到 TIAGo 7 关节的现场逐轴标定后，才允许进入实体控制。
 
 方向工具的运动命令经过正式 `Joint` 限位检查，但刻意使用恒等坐标换算，继续记录
 “电机输出角正增量”对应的实体运动方向。自然下垂回零属于电机零点与边界恢复流程，

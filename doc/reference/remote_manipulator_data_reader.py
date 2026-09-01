@@ -238,27 +238,14 @@ import logging
 import math
 import csv
 import os
+import numpy as np
+import matplotlib.pyplot as plt
 from datetime import datetime
 from typing import Callable, Optional, List, Dict, Any
-
-try:
-    import numpy as np
-except ImportError:
-    np = None
-
-try:
-    import matplotlib.pyplot as plt
-except ImportError:
-    plt = None
 
 # 配置日志
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("RemoteManipulatorReader")
-
-
-def _require_analysis_dependencies() -> None:
-    if np is None or plt is None:
-        raise ImportError("缺少分析依赖，请安装 numpy 和 matplotlib")
 
 # 常量定义
 REPORT_FRAME_HEADER = 0xAA
@@ -400,23 +387,6 @@ class RemoteManipulatorReader:
         self.reconnect_interval = 1.0  # 秒
         self._last_reconnect_attempt = 0.0
         self.serial_lock = threading.Lock()
-
-        # 统计信息（解析帧数/速率/丢包同步）
-        self.frames_parsed = 0
-        self.frames_bad_sync = 0
-        self.bytes_read = 0
-        self.first_frame_time = None
-        self.last_frame_time = None
-        self.enable_stats = False
-        self.stats_interval = 1.0
-        self._last_stats_time = time.monotonic()
-        self._frames_since_stats = 0
-
-        # 日志刷新节流，避免频繁 flush 造成卡顿
-        self._flush_every_n = 50
-        self._log_count_since_flush = 0
-        self._last_flush_time = time.monotonic()
-        self._flush_interval = 0.5
         
         if self.enable_logging:
             self._setup_logging()
@@ -517,13 +487,7 @@ class RemoteManipulatorReader:
                 
                 # 写入CSV文件
                 self.csv_writer.writerow(row_data)
-                self._log_count_since_flush += 1
-                now = time.monotonic()
-                if (self._log_count_since_flush >= self._flush_every_n or
-                        (now - self._last_flush_time) >= self._flush_interval):
-                    self.log_file.flush()
-                    self._log_count_since_flush = 0
-                    self._last_flush_time = now
+                self.log_file.flush()  # 确保数据写入磁盘
                 
                 # 存储数据用于后续分析
                 self.logged_data.append({
@@ -619,31 +583,18 @@ class RemoteManipulatorReader:
                     time.sleep(0.2)
                     continue
                 
-                # 在部分平台（尤其是 macOS）上，in_waiting 可能长期为0，但带超时的读取可正常获得数据
+                # 在部分平台（尤其是 macOS）上，in_waiting 可能长期为0，但阻塞读取可正常获得数据
                 try:
-                    if in_bytes and in_bytes > 0:
-                        chunk = ser_ref.read(min(in_bytes, 4096))
-                    else:
-                        # 触发一次短超时阻塞读，避免因 in_waiting 恒为0 而不读取缓冲区
-                        chunk = ser_ref.read(1)
-                        if chunk:
-                            # 若已读到首字节，尽量把缓冲区剩余数据一次性取完
-                            try:
-                                more = ser_ref.read(ser_ref.in_waiting)
-                            except Exception:
-                                more = b""
-                            if more:
-                                chunk += more
+                    read_size = in_bytes if in_bytes and in_bytes > 0 else 1
+                    logger.debug(f"read_size: {read_size}")
+                    chunk = ser_ref.read(read_size)
                 except Exception as e:
                     logger.error(f"串口读取异常，准备重连: {str(e)}")
                     self._close_serial()
                     time.sleep(0.2)
                     continue
                 if chunk:
-                    self.bytes_read += len(chunk)
                     self._accumulate_and_process_frames(chunk)
-                else:
-                    time.sleep(0.001)
                 # 防止CPU占用过高
                 time.sleep(0.0002)
             except Exception as e:
@@ -660,9 +611,7 @@ class RemoteManipulatorReader:
                 self.serial = serial.Serial(
                     port=self.port,
                     baudrate=self.baudrate,
-                    # 使用小超时，保证在 macOS 上即使 in_waiting 为0 也能读到数据
-                    timeout=0.01,
-                    write_timeout=0
+                    timeout=1
                 )
             logger.info(f"串口已打开：{self.port}")
             return True
@@ -749,7 +698,6 @@ class RemoteManipulatorReader:
             if not parsed:
                 # 无法匹配有效帧，丢弃1字节继续同步
                 self.frame_buffer = self.frame_buffer[1:]
-                self.frames_bad_sync += 1
     
     def _parse_data_packet(self, packet: bytearray, data_len: int) -> bool:
         """
@@ -839,11 +787,6 @@ class RemoteManipulatorReader:
 
             # 更新最新数据
             self.latest_data = data
-            self.frames_parsed += 1
-            self._frames_since_stats += 1
-            if self.first_frame_time is None:
-                self.first_frame_time = data.timestamp
-            self.last_frame_time = data.timestamp
             return True
             
         except Exception as e:
@@ -869,19 +812,6 @@ class RemoteManipulatorReader:
                                 callback(data)
                             except Exception as e:
                                 logger.error(f"回调函数执行错误: {str(e)}")
-
-                # 统计信息输出（可选）
-                if self.enable_stats:
-                    now = time.monotonic()
-                    if now - self._last_stats_time >= self.stats_interval:
-                        dt = now - self._last_stats_time
-                        fps = self._frames_since_stats / dt if dt > 0 else 0.0
-                        logger.info(
-                            f"RX fps={fps:.1f}, parsed={self.frames_parsed}, "
-                            f"bad_sync={self.frames_bad_sync}, bytes={self.bytes_read}"
-                        )
-                        self._frames_since_stats = 0
-                        self._last_stats_time = now
                 
                 # 防止CPU占用过高
                 time.sleep(0.0002)
@@ -946,7 +876,6 @@ class RemoteManipulatorReader:
             return
             
         try:
-            _require_analysis_dependencies()
             logger.info("开始绘制分析图表...")
             
             # 提取数据
@@ -1086,7 +1015,6 @@ class RemoteManipulatorReader:
             return
             
         try:
-            _require_analysis_dependencies()
             script_dir = os.path.dirname(os.path.abspath(__file__))
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             summary_file = os.path.join(script_dir, f"analysis_summary_{timestamp}.txt")
@@ -1098,13 +1026,6 @@ class RemoteManipulatorReader:
                 f.write(f"Recording Duration: {self.logged_data[-1]['relative_time']:.2f} seconds\n")
                 f.write(f"Total Data Points: {len(self.logged_data)}\n")
                 f.write(f"Average Sample Rate: {len(self.logged_data) / self.logged_data[-1]['relative_time']:.2f} Hz\n\n")
-
-                # 解析层面帧率（更接近真实接收）
-                if self.first_frame_time and self.last_frame_time and self.last_frame_time > self.first_frame_time:
-                    parse_rate = self.frames_parsed / (self.last_frame_time - self.first_frame_time)
-                    f.write(f"Parsed Frame Rate: {parse_rate:.2f} Hz\n")
-                    f.write(f"Parsed Frames: {self.frames_parsed}\n")
-                    f.write(f"Bad Sync Drops: {self.frames_bad_sync}\n\n")
                 
                 # 分析每个关节的统计信息
                 for side in ['left', 'right']:
@@ -1386,7 +1307,7 @@ def data_recording_demo():
     print("=" * 60)
     
     # 创建读取器实例（启用数据记录）
-    reader = RemoteManipulatorReader(port="/dev/tty.usbmodem355B346632351", baudrate=2000000, enable_logging=True)
+    reader = RemoteManipulatorReader(port="/dev/tty.usbmodem3862327431351", baudrate=2000000, enable_logging=True)
     
     # 启动数据读取
     if not reader.start():
@@ -1457,7 +1378,7 @@ def simple_console_demo():
     print("-" * 50)
     
     # 创建读取器实例（启用数据记录）
-    reader = RemoteManipulatorReader(port="/dev/tty.usbmodem355B346632351", baudrate=2000000, enable_logging=False)
+    reader = RemoteManipulatorReader(port="/dev/tty.usbmodem3862327431351", baudrate=2000000, enable_logging=False)
     
     # 定义回调函数
     def on_data_received(data):

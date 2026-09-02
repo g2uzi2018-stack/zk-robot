@@ -142,10 +142,6 @@ target_link_libraries(exoskeleton_protocol_test PRIVATE
     exoskeleton_input
 )
 
-target_compile_definitions(exoskeleton_protocol_test PRIVATE
-    EXOSKELETON_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
-)
-
 add_test(NAME exoskeleton_protocol COMMAND exoskeleton_protocol_test)
 
 add_executable(exoskeleton_stream_decoder_test
@@ -167,3 +163,13 @@ target_link_libraries(exoskeleton_device_discovery_test PRIVATE
 )
 
 add_test(NAME exoskeleton_device_discovery COMMAND exoskeleton_device_discovery_test)
+
+add_executable(exoskeleton_runtime_test
+    exoskeleton_runtime_test.cpp
+)
+
+target_link_libraries(exoskeleton_runtime_test PRIVATE
+    exoskeleton_input
+)
+
+add_test(NAME exoskeleton_runtime COMMAND exoskeleton_runtime_test)

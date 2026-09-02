@@ -387,10 +387,7 @@ void Exoskeleton::start()
 
     decoder_.reset();
     connected_.store(false);
-    {
-        std::lock_guard<std::mutex> state_lock(state_mutex_);
-        latest_state_.reset();
-    }
+    clearLatestState();
     {
         std::lock_guard<std::mutex> statistics_lock(statistics_mutex_);
         statistics_ = ExoskeletonStatistics{};
@@ -409,6 +406,7 @@ void Exoskeleton::stop() noexcept
         {
             connected_.store(false);
             transport_.close();
+            clearLatestState();
             return;
         }
         running_.store(false);
@@ -424,6 +422,7 @@ void Exoskeleton::stop() noexcept
     {
         thread.join();
     }
+    clearLatestState();
 }
 
 bool Exoskeleton::connected() const noexcept
@@ -440,6 +439,12 @@ std::optional<ExoskeletonState> Exoskeleton::latestState() const
 {
     std::lock_guard<std::mutex> lock(state_mutex_);
     return latest_state_;
+}
+
+void Exoskeleton::clearLatestState()
+{
+    std::lock_guard<std::mutex> lock(state_mutex_);
+    latest_state_.reset();
 }
 
 bool Exoskeleton::stateFresh() const
@@ -520,6 +525,9 @@ void Exoskeleton::run()
         if (!transport_.isOpen())
         {
             connected_.store(false);
+            // 旧串口会话的快照不能跨连接继续使用；否则在较短的
+            // reconnect_interval 配置下，stateFresh() 可能暂时返回 true。
+            clearLatestState();
             decoder_.resetBuffer();
             std::string device;
             if (!config_.device.empty() && config_.device != "auto")
@@ -544,6 +552,7 @@ void Exoskeleton::run()
             }
 
             decoder_.resetBuffer();
+            clearLatestState();
             connected_.store(true);
             {
                 std::lock_guard<std::mutex> lock(statistics_mutex_);
@@ -563,6 +572,7 @@ void Exoskeleton::run()
         if (poll_result.status != TransportStatus::Ready)
         {
             connected_.store(false);
+            clearLatestState();
             transport_.close();
             decoder_.resetBuffer();
             waitForReconnect();
@@ -584,6 +594,7 @@ void Exoskeleton::run()
         }
 
         connected_.store(false);
+        clearLatestState();
         transport_.close();
         decoder_.resetBuffer();
         waitForReconnect();
@@ -591,6 +602,7 @@ void Exoskeleton::run()
 
     transport_.close();
     connected_.store(false);
+    clearLatestState();
 }
 
 } // namespace robot::input::exoskeleton

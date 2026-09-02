@@ -60,7 +60,7 @@ ctest --test-dir build --output-on-failure
 
 ## 外骨骼控制
 
-外骨骼协议、编码器弧度换算、现场槽位/正方向记录和 TI5 重定向边界见
+外骨骼协议、编码器弧度换算、现场槽位/正方向记录、3D 验证器和测试方法见
 `doc/exoskeleton_development.md`。官方 `remote_manipulator_data_reader.py`
 的原始快照位于 `doc/reference/`，仅用于核对协议和换算公式；C++
 `exoskeleton_input` 和项目内 Python 监视器不再依赖完整厂商 SDK。
@@ -68,12 +68,13 @@ ctest --test-dir build --output-on-failure
 先做只读监测：
 
 ```bash
-python3 tools/exoskeleton_joint_monitor.py --port /dev/ttyACM0
+python3 tools/exoskeleton_joint_monitor.py
 cmake --build build --target exoskeleton_monitor exoskeleton_tiago_teleop -j2
 ./build/exoskeleton_monitor config/exoskeleton.yaml
 ```
 
-厂商资料没有定义 8 个编码器槽位对应的人体/机器人关节，因此还必须现场逐轴标定
+工具默认通过 VID:PID 自动查找外骨骼；只有排查设备枚举问题时才临时使用
+`--port /dev/ttyACM...`。厂商资料没有定义 8 个编码器槽位对应的人体关节，因此还必须现场逐轴标定
 `retargeting`。在
 `handset_calibration.verified` 和 `retargeting.verified` 都改为 `true` 前，TIAGo
 遥操作的 `--confirm` 会停在等待状态，不能向实体机器人下发目标。

@@ -17,6 +17,8 @@ import unicodedata
 from dataclasses import dataclass
 from typing import Dict, Optional, Tuple
 
+from exoskeleton_serial import parse_usb_id, resolve_serial_port
+
 try:
     import serial
 except ImportError as error:  # pragma: no cover - environment dependent
@@ -126,8 +128,20 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--port",
-        default="/dev/ttyACM0",
-        help="串口路径，默认 /dev/ttyACM0",
+        default=None,
+        help="显式指定串口路径；默认按 USB VID:PID 自动发现",
+    )
+    parser.add_argument(
+        "--vid",
+        type=parse_usb_id,
+        default=0x0483,
+        help="USB VID，默认 0x0483",
+    )
+    parser.add_argument(
+        "--pid",
+        type=parse_usb_id,
+        default=0x5740,
+        help="USB PID，默认 0x5740",
     )
     parser.add_argument("--baudrate", type=int, default=2_000_000)
     parser.add_argument(
@@ -224,8 +238,10 @@ def main() -> int:
     latest: Optional[TelemetrySnapshot] = None
     generation = 0
     reader: Optional[LegacySerialReader] = None
+    active_port: Optional[str] = None
     try:
-        reader = LegacySerialReader(args.port, args.baudrate)
+        active_port = resolve_serial_port(args.port, args.vid, args.pid)
+        reader = LegacySerialReader(active_port, args.baudrate)
         while True:
             snapshot = reader.read_snapshot()
             if snapshot is not None:
@@ -243,8 +259,9 @@ def main() -> int:
             time.sleep(args.interval)
     except KeyboardInterrupt:
         return 0
-    except serial.SerialException as error:
-        print(f"\n无法打开或读取串口 {args.port}: {error}", file=sys.stderr)
+    except (serial.SerialException, RuntimeError) as error:
+        binding = active_port or args.port or f"VID:PID={args.vid:04x}:{args.pid:04x}"
+        print(f"\n无法打开或读取串口 {binding}: {error}", file=sys.stderr)
         return 1
     finally:
         if reader is not None:

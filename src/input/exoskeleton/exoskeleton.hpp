@@ -21,7 +21,8 @@ struct ExoskeletonConfig
 {
     // 非空且不是 "auto" 时直接使用该串口路径；"auto" 或空字符串时，
     // 通过 USB VID:PID 枚举唯一设备。显式路径与官方读取器的
-    // port 参数对应。
+    // port 参数对应。实际运行配置推荐使用 "auto"，避免依赖会变化的
+    // /dev/ttyACM* 或 /dev/ttyUSB* 名称。
     std::string device;
     std::uint16_t usb_vid{0x0483};
     std::uint16_t usb_pid{0x5740};
@@ -72,6 +73,7 @@ private:
     void run();
     void waitForReconnect();
     void consumeBytes(const std::uint8_t *data, std::size_t size);
+    void clearLatestState();
 
     ExoskeletonConfig config_;
     SerialTransport transport_;

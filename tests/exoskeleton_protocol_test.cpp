@@ -1,14 +1,17 @@
 #include "input/exoskeleton/exoskeleton.hpp"
 
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <limits>
 #include <stdexcept>
 #include <string>
+#include <unistd.h>
 #include <utility>
 
 namespace
@@ -309,13 +312,38 @@ void testVendorFrameLengths()
 
 void testConfig()
 {
-    const auto config = loadExoskeletonConfig(
-        std::filesystem::path{EXOSKELETON_SOURCE_DIR} /
-        "config/exoskeleton.yaml");
+    const auto unique_suffix = std::to_string(::getpid()) + "_" +
+                               std::to_string(
+                                   std::chrono::steady_clock::now()
+                                       .time_since_epoch()
+                                       .count());
+    const auto config_path = std::filesystem::temp_directory_path() /
+                             ("zk_robot_exoskeleton_" + unique_suffix +
+                              ".yaml");
+    {
+        std::ofstream output(config_path);
+        expect(output.good(), "failed to create temporary config");
+        output << "exoskeleton:\n"
+               << "  serial:\n"
+               << "    device: auto\n"
+               << "    usb_vid: 0x0483\n"
+               << "    usb_pid: 0x5740\n"
+               << "    match_vid_only: false\n"
+               << "    baudrate: 2000000\n"
+               << "    poll_timeout_ms: 20\n"
+               << "    reconnect_interval_ms: 1000\n"
+               << "  telemetry:\n"
+               << "    frame_size: 131\n"
+               << "    stale_timeout_ms: 100\n";
+    }
+
+    const auto config = loadExoskeletonConfig(config_path);
+    std::error_code remove_error;
+    std::filesystem::remove(config_path, remove_error);
     expect(config.usb_vid == 0x0483, "config USB VID mismatch");
     expect(config.usb_pid == 0x5740, "config USB PID mismatch");
     expect(!config.match_vid_only, "config must use strict VID:PID matching");
-    expect(config.device == "/dev/exoskeleton", "config device mismatch");
+    expect(config.device == "auto", "config device mismatch");
     expect(config.baudrate == 2000000, "config baudrate mismatch");
     expect(config.poll_timeout == std::chrono::milliseconds{20},
            "config poll timeout mismatch");

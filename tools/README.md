@@ -1,4 +1,4 @@
-# TI5 实机调试工具
+# 调试工具说明
 
 本目录中的程序可能打开实体 CAN 接口或让机器人运动，不由 `ctest` 自动运行。
 
@@ -16,11 +16,11 @@
   默认排除在普通构建之外，必须显式构建并传入 `--confirm`。
 - `exoskeleton_joint_monitor.py`：固定布局显示左右臂 8 个官方编码器槽位，
   只更新数值，内置 legacy 帧解析，默认按 USB VID:PID 自动找串口，便于穿戴状态下逐轴
-  标定；不连接 TIAGo。
+  标定；不连接执行器。
 - `exoskeleton_3d_viewer.py`：通过本地浏览器显示带厚度、遮挡和明暗的低多边形 3D 七自由度机械结构；
   slot 0/1 是肩部前后和侧向电机，slot 2 是大臂中段旋转，slot 3 是肘部屈曲，slot 4 是小臂旋转，
   slot 5/6 是腕部两个电机，slot 7 仅显示不参与姿态；每个槽位直接按弧度和现场正方向符号驱动对应
-  转轴。支持 `--demo` 离线演示，不连接 TIAGo；支持鼠标拖动旋转视角、滚轮缩放、WASD 平移、
+  转轴。支持 `--demo` 离线演示，不连接执行器；支持鼠标拖动旋转视角、滚轮缩放、WASD 平移、
   空格上升、Shift 下降和全屏，并绘制绿色网格地面与黄色面向箭头辅助判断。
 
 外骨骼联调时，下面两个 Python 读取器二选一；切换到另一个之前先退出当前程序：
@@ -36,12 +36,13 @@ python3 tools/exoskeleton_3d_viewer.py
 需要使用 C++ 监视器时，也要先退出 Python 读取器：
 
 ```bash
-cmake --build build --target exoskeleton_monitor exoskeleton_tiago_teleop -j2
-./build/exoskeleton_monitor config/exoskeleton.yaml
+cmake --build build --target exoskeleton_monitor -j2
+./build/exoskeleton_monitor /path/to/exoskeleton-config.yaml
 ```
 
-C++ 配置中的 `exoskeleton.serial.device` 应设为 `auto`，由 `usb_vid`、`usb_pid` 和
-`match_vid_only: false` 负责严格匹配；不要把 `/dev/ttyACM0` 写死。
+当前工作树不提供固定的外骨骼运行配置文件，配置格式正在重新规划；上面的路径需要替换为实际配置。
+现有 loader 中，`exoskeleton.serial.device` 为空或为 `auto` 时按 `usb_vid`、`usb_pid` 发现设备，
+不应把 `/dev/ttyACM0` 写成长期身份。
 
 没有外骨骼时可以先看离线演示：
 

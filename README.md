@@ -69,12 +69,13 @@ ctest --test-dir build --output-on-failure
 
 ```bash
 python3 tools/exoskeleton_joint_monitor.py
-cmake --build build --target exoskeleton_monitor exoskeleton_tiago_teleop -j2
-./build/exoskeleton_monitor config/exoskeleton.yaml
+cmake --build build --target exoskeleton_monitor -j2
+./build/exoskeleton_monitor /path/to/exoskeleton-config.yaml
 ```
 
 工具默认通过 VID:PID 自动查找外骨骼；只有排查设备枚举问题时才临时使用
-`--port /dev/ttyACM...`。厂商资料没有定义 8 个编码器槽位对应的人体关节，因此还必须现场逐轴标定
+`--port /dev/ttyACM...`。当前外骨骼运行配置文件正在重新规划，上面的路径需要替换为实际配置。
+厂商资料没有定义 8 个编码器槽位对应的人体关节，因此还必须现场逐轴标定
 `retargeting`。在
 `handset_calibration.verified` 和 `retargeting.verified` 都改为 `true` 前，TIAGo
 遥操作的 `--confirm` 会停在等待状态，不能向实体机器人下发目标。

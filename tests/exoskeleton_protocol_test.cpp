@@ -170,10 +170,10 @@ void testNormalFrameAndFields()
     expect(isValidFrame(frame), "normal frame rejected");
     const auto state = ExoskeletonProtocol::parse(frame);
     const double radians_per_count = kVendorEncoderToRadianRatio;
-    expect(near(state.left_arm_joint_rad[1], 16384.0 * radians_per_count),
-           "left joint little-endian conversion failed");
-    expect(near(state.left_arm_joint_rad[2], -16384.0 * radians_per_count),
-           "negative left joint conversion failed");
+    const double pi = std::acos(-1.0);
+    expect(near(state.left_arm_joint_rad[1], 2.0 * pi) &&
+               near(state.left_arm_joint_rad[2], -2.0 * pi),
+           "left joint raw-to-radian conversion failed");
     expect(near(state.right_arm_joint_rad[0], -16384.0 * radians_per_count),
            "right joint offset/reserved word parsing failed");
     expect(state.left.raw_x == 1234 && state.left.raw_y == -567,

@@ -181,6 +181,21 @@ void testReconnectClearsPreviousSnapshot()
             std::chrono::milliseconds{500}),
         "exoskeleton did not open the pseudo-terminal");
 
+    errno = 0;
+    const int competing_descriptor = ::open(
+        terminal.slave().c_str(),
+        O_RDWR | O_NOCTTY | O_NONBLOCK);
+    const int competing_error = errno;
+    if (competing_descriptor >= 0)
+    {
+        ::close(competing_descriptor);
+        throw std::runtime_error(
+            "a second process could open the exclusive exoskeleton serial port");
+    }
+    expect(
+        competing_error == EBUSY,
+        "exclusive exoskeleton serial port did not reject a second open");
+
     const auto frame = makeFrame();
     writeAll(
         terminal.master(),

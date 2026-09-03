@@ -7,6 +7,7 @@
 #include <fcntl.h>
 #include <poll.h>
 #include <stdexcept>
+#include <sys/ioctl.h>
 #include <termios.h>
 #include <unistd.h>
 #include <utility>
@@ -181,6 +182,23 @@ bool SerialTransport::openUnlocked()
         return false;
     }
 
+#ifdef TIOCEXCL
+    // TIOCEXCL is the kernel-enforced tty exclusive mode.  Do this
+    // immediately after open so a second reader cannot open the same tty
+    // after this transport has acquired it.
+    if (::ioctl(candidate, TIOCEXCL) != 0)
+    {
+        const int error_number = errno;
+        ::close(candidate);
+        last_error_ = errorMessage("TIOCEXCL " + device_, error_number);
+        return false;
+    }
+#else
+    ::close(candidate);
+    last_error_ = "TIOCEXCL is not available for " + device_;
+    return false;
+#endif
+
     termios options{};
     if (::tcgetattr(candidate, &options) != 0)
     {
@@ -291,17 +309,21 @@ PollResult SerialTransport::poll(const std::chrono::milliseconds timeout)
             }
             if ((descriptor.revents & POLLNVAL) != 0)
             {
+                last_error_ = errorMessage("poll " + device_, EBADF);
                 return {TransportStatus::Error, EBADF};
             }
             if ((descriptor.revents & POLLHUP) != 0)
             {
+                last_error_ = "poll " + device_ + ": hangup";
                 return {TransportStatus::Closed, 0};
             }
             if ((descriptor.revents & POLLERR) != 0)
             {
+                last_error_ = "poll " + device_ + ": device error";
                 return {TransportStatus::Error, EIO};
             }
 
+            last_error_ = "poll " + device_ + ": unexpected event";
             return {TransportStatus::Error, EIO};
         }
 

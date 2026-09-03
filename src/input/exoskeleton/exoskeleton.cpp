@@ -1,5 +1,6 @@
 #include "input/exoskeleton/exoskeleton.hpp"
 
+#include "common/logger.hpp"
 #include "input/exoskeleton/serial_device_discovery.hpp"
 
 #include <charconv>
@@ -260,6 +261,24 @@ robot::input::exoskeleton::ExoskeletonFrameMode parseFrameMode(
     }
 }
 
+const char *transportStatusName(
+    const robot::input::exoskeleton::TransportStatus status) noexcept
+{
+    using robot::input::exoskeleton::TransportStatus;
+    switch (status)
+    {
+    case TransportStatus::Ready:
+        return "ready";
+    case TransportStatus::Timeout:
+        return "timeout";
+    case TransportStatus::Closed:
+        return "closed";
+    case TransportStatus::Error:
+        return "error";
+    }
+    return "unknown";
+}
+
 } // namespace
 
 namespace robot::input::exoskeleton
@@ -504,16 +523,20 @@ void Exoskeleton::consumeBytes(
             std::lock_guard<std::mutex> lock(state_mutex_);
             latest_state_ = std::move(state);
         }
-        catch (const std::exception &)
+        catch (const std::exception &error)
         {
             // StreamDecoder 已经验证过帧格式；这里仍保留异常边界，
             // 确保异常数据不会终止串口读取线程。
+            robot::common::logger()->error(
+                "Exoskeleton: failed to parse a valid frame: {}",
+                error.what());
         }
     }
 }
 
 void Exoskeleton::run()
 {
+    const auto logger = robot::common::logger();
     std::array<std::uint8_t, 4096> read_buffer{};
     const SerialDeviceSelector selector{
         config_.usb_vid,
@@ -539,6 +562,25 @@ void Exoskeleton::run()
                 const auto devices = enumerateSerialDevices(selector);
                 if (devices.size() != 1)
                 {
+                    if (devices.empty())
+                    {
+                        logger->warn(
+                            "Exoskeleton: no serial device matches VID:PID "
+                            "0x{:04x}:0x{:04x}; retrying in {} ms",
+                            static_cast<unsigned int>(config_.usb_vid),
+                            static_cast<unsigned int>(config_.usb_pid),
+                            config_.reconnect_interval.count());
+                    }
+                    else
+                    {
+                        logger->error(
+                            "Exoskeleton: found {} serial devices matching "
+                            "VID:PID 0x{:04x}:0x{:04x}; refusing ambiguous "
+                            "selection",
+                            devices.size(),
+                            static_cast<unsigned int>(config_.usb_vid),
+                            static_cast<unsigned int>(config_.usb_pid));
+                    }
                     waitForReconnect();
                     continue;
                 }
@@ -547,6 +589,12 @@ void Exoskeleton::run()
 
             if (!transport_.open(device))
             {
+                logger->error(
+                    "Exoskeleton: failed to open serial device {}: {}; "
+                    "retrying in {} ms",
+                    device,
+                    transport_.lastError(),
+                    config_.reconnect_interval.count());
                 waitForReconnect();
                 continue;
             }
@@ -554,6 +602,10 @@ void Exoskeleton::run()
             decoder_.resetBuffer();
             clearLatestState();
             connected_.store(true);
+            logger->info(
+                "Exoskeleton connected: device={}, baudrate={}",
+                device,
+                config_.baudrate);
             {
                 std::lock_guard<std::mutex> lock(statistics_mutex_);
                 ++statistics_.reconnect_count;
@@ -571,6 +623,26 @@ void Exoskeleton::run()
         }
         if (poll_result.status != TransportStatus::Ready)
         {
+            const auto detail = transport_.lastError();
+            if (poll_result.status == TransportStatus::Closed)
+            {
+                logger->warn(
+                    "Exoskeleton serial connection closed on {} "
+                    "(status={}, errno={}); reconnecting",
+                    transport_.device(),
+                    transportStatusName(poll_result.status),
+                    poll_result.error_number);
+            }
+            else
+            {
+                logger->error(
+                    "Exoskeleton serial poll failed on {} "
+                    "(status={}, errno={}): {}; reconnecting",
+                    transport_.device(),
+                    transportStatusName(poll_result.status),
+                    poll_result.error_number,
+                    detail.empty() ? "unknown error" : detail);
+            }
             connected_.store(false);
             clearLatestState();
             transport_.close();
@@ -591,6 +663,27 @@ void Exoskeleton::run()
         if (read_result.status == TransportStatus::Timeout)
         {
             continue;
+        }
+
+        const auto detail = transport_.lastError();
+        if (read_result.status == TransportStatus::Closed)
+        {
+            logger->warn(
+                "Exoskeleton serial connection closed while reading {} "
+                "(status={}, errno={}); reconnecting",
+                transport_.device(),
+                transportStatusName(read_result.status),
+                read_result.error_number);
+        }
+        else
+        {
+            logger->error(
+                "Exoskeleton serial read failed on {} "
+                "(status={}, errno={}): {}; reconnecting",
+                transport_.device(),
+                transportStatusName(read_result.status),
+                read_result.error_number,
+                detail.empty() ? "no bytes read" : detail);
         }
 
         connected_.store(false);

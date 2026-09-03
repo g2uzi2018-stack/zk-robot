@@ -18,5 +18,6 @@ target_compile_features(exoskeleton_input PUBLIC
 
 target_link_libraries(exoskeleton_input PUBLIC
     Threads::Threads
+    spdlog::spdlog
     yaml-cpp
 )

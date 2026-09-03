@@ -1,0 +1,13 @@
+exoskeleton:
+  serial:
+    device: auto
+    usb_vid: 0x0483
+    usb_pid: 0x5740
+    match_vid_only: false
+    baudrate: 2000000
+    poll_timeout_ms: 20
+    reconnect_interval_ms: 1000
+
+  telemetry:
+    frame_size: 131
+    stale_timeout_ms: 100

@@ -1,5 +1,7 @@
 # 调试工具说明
 
+测试总入口与验证记录：[测试代码合集](../doc/测试代码合集.md)。
+
 本目录中的程序可能打开实体 CAN 接口或让机器人运动，不由 `ctest` 自动运行。
 
 - `ti5_zero_home.cpp`：头部和双臂回零、保持和受控停止菜单。
@@ -7,8 +9,7 @@
 - `ti5_arm_check.cpp`：基于正式 Arm 模型坐标完成整臂读取、当前位置保持、
   单轴小幅往返和 STOP 状态确认；当前位置超出驱动器目标范围时拒绝运动，
   要求先运行回零工具。
-- `ti5_hand_check.cpp`：只初始化傲意灵巧手 CAN，支持左手、右手或双手的
-  状态读取，以及六通道或指定单通道的小幅往返；不会初始化双臂和头部。
+- `ti5_hand_check.cpp`：只打开 `hands.yaml` 直接绑定的傲意灵巧手 SocketCAN，支持左手、右手或双手的状态读取、六通道或指定单通道小幅往返，以及按键逐关节控制；不会初始化双臂和头部。
 - `ti5_full_check.cpp`：整机组合测试，按顺序小幅测试双臂、头部和左右灵巧手；
   需要显式构建和现场确认，默认不参与普通构建。
 - `exoskeleton_monitor.cpp`：只读打开外骨骼并显示遥测，不打开机器人 CAN。
@@ -60,6 +61,25 @@ python3 tools/exoskeleton_3d_viewer.py --demo
 不会整体迁入使用模型坐标的 Arm；Arm 检查发现当前位置越界时会要求先运行回零工具。
 
 回零、方向和整臂工具默认排除腰部、折叠机构和傲意手；整机组合工具按流程测试
-双臂、头部和灵巧手。独立灵巧手工具只使用傲意手适配器。
+双臂、头部和灵巧手。独立灵巧手工具直接使用 `hands.yaml` 为每只手配置的 SocketCAN 接口和 ID。
 编译及操作前必须阅读 `doc/` 中对应文档，关闭其他 CAN 控制进程，并保证物理急停
 可以立即触达。
+
+
+### 灵巧手按键控制
+
+手部配置直接指定 interface 和 controller_node_id，例如左手 can4 / 70、右手 can5 / 60。设备没有提供当前状态反馈时，按键模式使用 --initial-raw 作为基准位置，默认 30000。
+
+    export ZK_ROBOT_CONFIRM_HAND_CHECK=YES
+    export ZK_ROBOT_CONFIRM_UNVERIFIED_HAND_TEST=YES
+
+    ./build/tools/ti5_hand_check \
+      --side left \
+      --interactive \
+      --initial-raw 30000 \
+      --delta-raw 20 \
+      --speed-raw 1 \
+      --commission
+
+进入控制后，数字键 1～6 选择关节，向上键增加、向下键减少一个步长，+/- 也可调整，q 退出。--side right 使用右手配置；--side both 会依次控制左右手。
+

@@ -111,7 +111,8 @@ enum class MenuAction
 {
     ZeroHome,
     StopArms,
-    HoldCurrent,
+    RecordWaypoint,
+    RunWaypoint,
 };
 
 using SafetyLimit = robot::ti5::JointPositionLimits;
@@ -325,9 +326,10 @@ MenuAction promptMenuAction()
         << "  1 = 头部和双臂回到 CAN 电机零点并保持\n"
         << "  2 = 双臂缓慢下放到自然下垂参考的第二中间点，再发送 0x02 STOP\n"
         << "      到达后会暂停，等操作者托稳并二次确认才 STOP\n"
-        << "  3 = 头部和双臂在当前位置建立 CSP HOLD\n"
+        << "  3 = 只读记录当前 17 轴姿态为特定点\n"
+        << "  4 = 运行到已记录的特定点并保持\n"
         << "  q = 不打开 CAN，直接退出\n"
-        << "请输入 1、2、3 或 q：" << std::flush;
+        << "请输入 1、2、3、4 或 q：" << std::flush;
     std::string answer;
     if (!std::getline(std::cin, answer))
     {
@@ -343,14 +345,18 @@ MenuAction promptMenuAction()
     }
     if (answer == "3")
     {
-        return MenuAction::HoldCurrent;
+        return MenuAction::RecordWaypoint;
+    }
+    if (answer == "4")
+    {
+        return MenuAction::RunWaypoint;
     }
     if (answer == "q" || answer == "Q")
     {
         std::cout << "已退出；未打开 CAN。\n";
         std::exit(0);
     }
-    throw std::runtime_error("菜单只能输入 1、2、3 或 q；未打开 CAN");
+    throw std::runtime_error("菜单只能输入 1、2、3、4 或 q；未打开 CAN");
 }
 
 void requireYes(const std::string &message)
@@ -484,7 +490,7 @@ void printPlan(
 {
     std::cout
         << "TI5 T170C 独立实机测试菜单\n"
-        << "动作：电机零点回零 / 双臂两段缓降后 STOP / 当前位置 HOLD\n"
+        << "动作：电机零点回零 / 双臂两段缓降后 STOP / 记录特定点 / 运行到特定点\n"
         << "排除：waist_yaw、Fold_P1/P2/P3/R、傲意手\n"
         << "CAN：" << (options.bring_up ? "自动拉起四路本体 CAN" : "使用已拉起的 CAN")
         << "\n"
@@ -523,7 +529,8 @@ void printPlan(
     std::cout
         << "\n菜单 1：17 轴回到 CAN 电机角 0 并保持\n"
         << "菜单 2：双臂经两个中间点缓慢下放，托稳确认后在第二中间点 STOP\n"
-        << "菜单 3：17 轴在当前位置建立 CSP HOLD\n";
+        << "菜单 3：只读记录当前 17 轴姿态，保存到 recorded_waypoint.txt\n"
+        << "菜单 4：五次曲线运行到记录点并保持，峰值不超过 0.15 rad/s\n";
 }
 
 std::vector<std::string> prepareBodyInterfaces(
@@ -1599,6 +1606,53 @@ void holdTargetsAndVerify(std::vector<JointRuntime> &joints)
 
 } // namespace
 
+
+std::filesystem::path waypointPath(const std::filesystem::path &source_dir)
+{
+    return source_dir / "config/ti5/t170c/recorded_waypoint.txt";
+}
+
+void saveWaypoint(const std::filesystem::path &path,
+                  const std::vector<JointRuntime> &joints)
+{
+    const auto temporary = path.string() + ".tmp." + std::to_string(::getpid());
+    std::ofstream output(temporary, std::ios::trunc);
+    if (!output) throw std::runtime_error("无法保存特定点：" + path.string());
+    output << "TI5_WAYPOINT_V1 motor_rad\n" << std::setprecision(17);
+    for (const auto &joint : joints)
+        output << joint.config.name << " " << joint.start_position << "\n";
+    if (!output) throw std::runtime_error("写入特定点失败：" + path.string());
+    output.close();
+    std::filesystem::rename(temporary, path);
+}
+
+std::vector<double> loadWaypoint(const std::filesystem::path &path,
+                                 const std::vector<JointRuntime> &joints)
+{
+    std::ifstream input(path);
+    if (!input) throw std::runtime_error("未找到已记录的特定点，请先选择菜单 3");
+    std::map<std::string, double> values;
+    std::string header, unit;
+    if (!(input >> header >> unit) || header != "TI5_WAYPOINT_V1" || unit != "motor_rad")
+        throw std::runtime_error("特定点文件格式无效：" + path.string());
+    std::string name; double value;
+    while (input >> name >> value) values[name] = value;
+    std::vector<double> targets;
+    targets.reserve(joints.size());
+    for (const auto &joint : joints) {
+        const auto it = values.find(joint.config.name);
+        if (it == values.end()) throw std::runtime_error("特定点缺少关节：" + joint.config.name);
+        if (!std::isfinite(it->second) ||
+            it->second < joint.safety.minimum_rad + kLimitMarginRad ||
+            it->second > joint.safety.maximum_rad - kLimitMarginRad ||
+            it->second < joint.driver_limits.minimum_rad + kLimitMarginRad ||
+            it->second > joint.driver_limits.maximum_rad - kLimitMarginRad)
+            throw std::runtime_error("特定点超出安全限位：" + joint.config.name);
+        targets.push_back(it->second);
+    }
+    return targets;
+}
+
 int main(int argc, char **argv)
 {
     try
@@ -1776,6 +1830,17 @@ int main(int argc, char **argv)
             buses,
             action == MenuAction::ZeroHome);
 
+        if (action == MenuAction::RecordWaypoint)
+        {
+            requireYes("只读取当前 17 轴位置并保存特定点，不发送位置控制帧。确认继续？");
+            saveWaypoint(waypointPath(source_dir), joints);
+            robot::common::logger()->info("已记录特定点：{}", waypointPath(source_dir).string());
+            for (const auto &joint : joints)
+                std::cout << joint.config.name << " = " << std::fixed
+                          << std::setprecision(6) << joint.start_position << " rad\n";
+            return 0;
+        }
+
         try
         {
             if (action == MenuAction::ZeroHome)
@@ -1824,14 +1889,14 @@ int main(int argc, char **argv)
             }
             else
             {
-                printCspPreflight(joints, "当前位置 HOLD 预检通过");
-                requireYes(
-                    "程序将把刚读取的当前位置作为头部和双臂 17 轴 CSP 目标。\n"
-                    "不规划位移，但切换/建立 HOLD 时仍可能出现小幅纠偏；请清空夹点并保持急停可触达。");
+                const auto targets = loadWaypoint(waypointPath(source_dir), joints);
+                printCspPreflight(joints, "Run to recorded waypoint");
+                requireYes("Move all 17 joints to the recorded waypoint and hold. Confirm the area is safe.");
                 verifyReadiness(joints);
+                runTargetSegment(joints, targets, "recorded waypoint", kMaximumVelocityRadPerSecond);
+                for (std::size_t i = 0; i < joints.size(); ++i) joints[i].last_commanded = targets[i];
                 holdTargetsAndVerify(joints);
-                robot::common::logger()->info(
-                    "PASS：头部和双臂 17 个关节已在当前位置建立 CSP HOLD");
+                robot::common::logger()->info("PASS: reached recorded waypoint and holding");
             }
         }
         catch (...)

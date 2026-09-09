@@ -18,7 +18,8 @@ hand::HandSideConfig Hand::validatedConfig(
             "TI5 Hand side does not match hand config name");
     }
     if (config.protocol != "aoyi_hand" ||
-        config.controller_node_id == 0)
+        config.controller_node_id == 0 ||
+        config.response_node_id == 0)
     {
         throw std::invalid_argument(
             "TI5 Hand requires a valid aoyi_hand config");
@@ -36,6 +37,7 @@ Hand::Hand(
       channel_(
           std::move(interface_name),
           config_.controller_node_id,
+          config_.response_node_id,
           response_timeout)
 {
 }
@@ -50,6 +52,7 @@ Hand::Hand(
       channel_(
           std::move(transport),
           config_.controller_node_id,
+          config_.response_node_id,
           response_timeout)
 {
 }

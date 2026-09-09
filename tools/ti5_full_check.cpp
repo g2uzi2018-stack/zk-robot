@@ -1059,20 +1059,30 @@ void runBodyTest(
 }
 
 std::vector<std::string> prepareHandCan(
-    const robot::ti5::CanConfig &can_config,
+    const robot::ti5::CanConfig &,
     const robot::ti5::hand::HandConfig &hand_config)
 {
-    const auto &transport = hand_config.transport;
-    return prepareAdapterInterfaces(
-        can_config.socketcan.interface_regex,
-        transport.adapter_selector,
-        robot::can::CanInterfaceSettings{
-            transport.bitrate,
-            transport.restart_ms,
-            transport.reconfigure_wait,
-            transport.startup_wait,
-            transport.validate_bitrate},
-        transport.manage_linux_link);
+    std::vector<std::string> result{
+        hand_config.left.interface_name,
+        hand_config.right.interface_name};
+    std::sort(result.begin(), result.end());
+    result.erase(std::unique(result.begin(), result.end()), result.end());
+    if (result.empty() || result.front().empty()) {
+        throw std::runtime_error("手部配置必须直接指定 CAN 接口");
+    }
+    robot::can::CanInterfaceManager manager;
+    const robot::can::CanInterfaceSettings settings{
+        hand_config.transport.bitrate, hand_config.transport.restart_ms,
+        hand_config.transport.reconfigure_wait, hand_config.transport.startup_wait,
+        hand_config.transport.validate_bitrate};
+    for (auto &name : result) {
+        const auto ready = hand_config.transport.manage_linux_link
+            ? manager.prepare(name, settings) : manager.inspect(name);
+        if (!ready.up) throw std::runtime_error(name + " 未处于 UP 状态");
+        if (settings.validate_bitrate && (!ready.bitrate || *ready.bitrate != settings.bitrate))
+            throw std::runtime_error(name + " 波特率不一致");
+    }
+    return result;
 }
 
 robot::ti5::Hand::PositionValues makeHandTarget(
@@ -1182,6 +1192,30 @@ HandBusMapping prepareAndDiscoverHandBuses(
     const robot::ti5::hand::HandConfig &hand_config)
 {
     const auto candidates = prepareHandCan(can_config, hand_config);
+    if (!hand_config.left.discovery_enabled &&
+        !hand_config.right.discovery_enabled)
+    {
+        if (hand_config.left.interface_name.empty() ||
+            hand_config.right.interface_name.empty())
+        {
+            throw std::runtime_error(
+                "hands.yaml 必须为左右手直接配置 interface");
+        }
+        if (hand_config.left.interface_name ==
+            hand_config.right.interface_name)
+        {
+            throw std::runtime_error(
+                "左右手被配置到同一 CAN 接口；当前独立接收结构拒绝并发打开");
+        }
+        HandBusMapping mapping{
+            hand_config.left.interface_name,
+            hand_config.right.interface_name};
+        robot::common::logger()->info(
+            "灵巧手直接使用配置总线：left_hand -> {}, right_hand -> {}",
+            mapping.left_interface,
+            mapping.right_interface);
+        return mapping;
+    }
     robot::ti5::hand::HandDiscovery discovery;
     const auto result = discovery.discover(hand_config, candidates);
     if (!result.success ||

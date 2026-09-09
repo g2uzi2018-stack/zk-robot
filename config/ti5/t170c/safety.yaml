@@ -76,79 +76,79 @@ position_limits:
     verified_on_robot: false
 
   left_shoulder_pitch:
-    min: -2.792526803
-    max: 0.872664626
+    min: -2.094395102
+    max: 2.094395102
     verified_on_robot: false
 
   left_shoulder_roll:
     # 2026-08-23 记录的自然下垂参考约为 -90.623°。
     # 这里只扩展主机软件限位；实际 CSP 目标仍须落在驱动器 0x1A/0x1B
     # 与本配置的交集内。
-    min: -1.581678003
-    max: 1.396263402
+    min: -1.570796327
+    max: 1.570796327
     verified_on_robot: false
 
   left_shoulder_yaw:
-    min: -2.617993878
-    max: 2.617993878
+    min: -1.570796327
+    max: 1.570796327
     verified_on_robot: false
 
   left_elbow_yaw:
-    min: -2.268928028
-    max: 0.610865238
+    min: -2.356194490
+    max: 2.356194490
     verified_on_robot: false
 
   left_wrist_pitch:
-    min: -2.617993878
-    max: 2.617993878
+    min: -1.570796327
+    max: 1.570796327
     verified_on_robot: false
 
   left_wrist_yaw:
-    min: -0.698131701
-    max: 0.436332313
+    min: -1.396263402
+    max: 1.396263402
     verified_on_robot: false
 
   left_wrist_roll:
-    min: -2.268928028
-    max: 0.575958653
+    min: -1.570796327
+    max: 1.570796327
     verified_on_robot: false
 
   right_shoulder_pitch:
-    min: -0.872664626
-    max: 2.792526803
+    min: -2.094395102
+    max: 2.094395102
     verified_on_robot: false
 
   right_shoulder_roll:
-    min: -1.396263402
+    min: -1.570796327
     # 2026-08-23 记录的自然下垂参考约为 +86.114°。
     # 这里只扩展主机软件限位；实际 CSP 目标仍须落在驱动器 0x1A/0x1B
     # 与本配置的交集内。
-    max: 1.502965614
+    max: 1.570796327
     verified_on_robot: false
 
   right_shoulder_yaw:
-    min: -2.617993878
-    max: 2.617993878
+    min: -1.570796327
+    max: 1.570796327
     verified_on_robot: false
 
   right_elbow_yaw:
-    min: -0.610865238
-    max: 2.268928028
+    min: -2.356194490
+    max: 2.356194490
     verified_on_robot: false
 
   right_wrist_pitch:
-    min: -2.617993878
-    max: 2.617993878
+    min: -1.570796327
+    max: 1.570796327
     verified_on_robot: false
 
   right_wrist_yaw:
-    min: -0.436332313
-    max: 0.698131701
+    min: -1.396263402
+    max: 1.396263402
     verified_on_robot: false
 
   right_wrist_roll:
-    min: -0.575958653
-    max: 2.268928028
+    min: -1.570796327
+    max: 1.570796327
     verified_on_robot: false
 
 # 当前协议调查没有得到足够可靠的逐轴动态/电气安全参数。

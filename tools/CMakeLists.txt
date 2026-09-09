@@ -41,20 +41,6 @@ target_compile_definitions(ti5_arm_check PRIVATE
     TI5_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
 )
 
-add_executable(ti5_hand_check EXCLUDE_FROM_ALL
-    ti5_hand_check.cpp
-)
-
-target_link_libraries(ti5_hand_check PRIVATE
-    ti5_controller
-    ti5_config
-    spdlog::spdlog
-    fmt::fmt
-)
-
-target_compile_definitions(ti5_hand_check PRIVATE
-    TI5_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
-)
 
 add_executable(ti5_full_check EXCLUDE_FROM_ALL
     ti5_full_check.cpp
@@ -99,4 +85,20 @@ target_compile_definitions(exoskeleton_tiago_teleop PRIVATE
 
 set_target_properties(exoskeleton_tiago_teleop PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}"
+)
+
+# Interactive joint test CLI; explicit build only because it can drive hardware.
+add_executable(ti5_joint_cli EXCLUDE_FROM_ALL
+    ti5_joint_cli.cpp
+)
+
+target_link_libraries(ti5_joint_cli PRIVATE
+    ti5_controller
+    ti5_config
+    spdlog::spdlog
+    fmt::fmt
+)
+
+target_compile_definitions(ti5_joint_cli PRIVATE
+    TI5_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
 )

@@ -41,8 +41,11 @@ void expectThrow(Function &&function, const std::string &message)
 class FakeHandTransport final : public robot::ti5::hand::HandTransport
 {
 public:
-    explicit FakeHandTransport(const std::uint8_t hand_id)
+    explicit FakeHandTransport(
+        const std::uint8_t hand_id,
+        const std::uint8_t response_id = 0)
         : hand_id_(hand_id),
+          response_id_(response_id == 0 ? hand_id : response_id),
           request_reassembler_(
               hand_id,
               hand_id,
@@ -79,10 +82,22 @@ public:
             payload.push_back(static_cast<std::uint8_t>(10 + index));
         }
 
-        const auto bytes = robot::ti5::hand::encodePacket(
-            hand_id_,
+        auto bytes = robot::ti5::hand::encodePacket(
+            response_id_,
             robot::ti5::hand::kAoyiGetStatusCommand,
             payload);
+        if (response_id_ != hand_id_)
+        {
+            // Real responses can swap the application IDs: response hand_id
+            // is the configured response ID and the other byte names the hand.
+            bytes[3] = hand_id_;
+            std::uint8_t lrc = 0;
+            for (std::size_t index = 2; index + 1 < bytes.size(); ++index)
+            {
+                lrc = static_cast<std::uint8_t>(lrc ^ bytes[index]);
+            }
+            bytes.back() = lrc;
+        }
         for (const auto &response :
              robot::ti5::hand::fragmentPacket(hand_id_, bytes))
         {
@@ -106,6 +121,7 @@ public:
 
 private:
     std::uint8_t hand_id_{0};
+    std::uint8_t response_id_{0};
     robot::ti5::hand::PacketReassembler request_reassembler_;
     std::deque<robot::can::CanFrame> incoming;
 };
@@ -116,6 +132,7 @@ robot::ti5::hand::HandSideConfig leftConfig(const bool control_allowed)
     config.name = "left_hand";
     config.protocol = "aoyi_hand";
     config.controller_node_id = 70;
+    config.response_node_id = 70;
     config.protocol_verified = control_allowed;
     config.control_enabled = control_allowed;
     config.discovery_enabled = true;
@@ -255,6 +272,19 @@ int main()
                    hand::kAoyiSetPositionsCommand) ==
                    position_commands_before_idle_update,
                "paused HandController continued sending 0x50");
+
+        auto swapped_transport =
+            std::make_unique<FakeHandTransport>(70, 1);
+        auto swapped_config = leftConfig(true);
+        swapped_config.response_node_id = 1;
+        Hand swapped(
+            HandSide::Left,
+            swapped_config,
+            std::move(swapped_transport),
+            std::chrono::milliseconds{100});
+        const auto swapped_state = swapped.readState();
+        expect(swapped_state && swapped_state->positions_raw[0] == 100,
+               "swapped response hand_id was not accepted");
 
         auto wrong_transport = std::make_unique<FakeHandTransport>(70);
         expectThrow<std::invalid_argument>(

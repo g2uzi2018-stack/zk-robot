@@ -87,11 +87,12 @@ HandInterfaceDiscoveryResult scanInterface(
                 reassemblers;
             for (const auto id : ids)
             {
+                const auto response_id = (id == config.left.controller_node_id) ? config.left.response_node_id : config.right.response_node_id;
                 reassemblers.emplace(
                     id,
                     std::make_unique<robot::ti5::hand::PacketReassembler>(
                         id,
-                        id,
+                        response_id,
                         config.discovery.response_timeout));
                 sendStatusQuery(socket, id);
             }
@@ -117,20 +118,20 @@ HandInterfaceDiscoveryResult scanInterface(
                     break;
                 }
 
-                const auto it = reassemblers.find(
-                    static_cast<std::uint8_t>(frame->id));
-                if (it == reassemblers.end())
+                for (auto &entry : reassemblers)
                 {
-                    continue;
-                }
-
-                const auto packet = it->second->push(*frame, now);
-                if (packet &&
-                    packet->hand_id == frame->id &&
-                    packet->command ==
-                        robot::ti5::hand::kAoyiGetStatusCommand)
-                {
-                    responded.insert(packet->hand_id);
+                    const auto packet = entry.second->push(*frame, now);
+                    const auto expected_response_id =
+                        entry.first == config.left.controller_node_id
+                            ? config.left.response_node_id
+                            : config.right.response_node_id;
+                    if (packet &&
+                        packet->hand_id == expected_response_id &&
+                        packet->command ==
+                            robot::ti5::hand::kAoyiGetStatusCommand)
+                    {
+                        responded.insert(entry.first);
+                    }
                 }
 
                 if (responded.size() == ids.size())

@@ -37,7 +37,8 @@ private:
 };
 
 void validateConstruction(const std::unique_ptr<HandTransport> &transport,
-                          const std::uint8_t hand_id,
+                          const std::uint8_t controller_id,
+                          const std::uint8_t response_id,
                           const std::chrono::milliseconds response_timeout)
 {
     if (!transport)
@@ -45,10 +46,15 @@ void validateConstruction(const std::unique_ptr<HandTransport> &transport,
         throw std::invalid_argument(
             "Aoyi HandChannel transport must not be null");
     }
-    if (hand_id == 0)
+    if (controller_id == 0)
     {
         throw std::invalid_argument(
-            "Aoyi HandChannel hand ID must be non-zero");
+            "Aoyi HandChannel controller ID must be non-zero");
+    }
+    if (response_id == 0)
+    {
+        throw std::invalid_argument(
+            "Aoyi HandChannel response ID must be non-zero");
     }
     if (response_timeout.count() <= 0)
     {
@@ -61,13 +67,39 @@ void validateConstruction(const std::unique_ptr<HandTransport> &transport,
 
 HandChannel::HandChannel(
     std::string interface_name,
-    const std::uint8_t hand_id,
+    const std::uint8_t controller_id,
+    const std::uint8_t response_id,
     const std::chrono::milliseconds response_timeout)
     : HandChannel(
           std::make_unique<SocketCanHandTransport>(
-              std::move(interface_name), hand_id),
-          hand_id,
+              std::move(interface_name), controller_id),
+          controller_id,
+          response_id,
           response_timeout)
+{
+}
+
+HandChannel::HandChannel(
+    std::unique_ptr<HandTransport> transport,
+    const std::uint8_t controller_id,
+    const std::uint8_t response_id,
+    const std::chrono::milliseconds response_timeout)
+    : transport_(std::move(transport)),
+      controller_id_(controller_id),
+      response_id_(response_id),
+      response_timeout_(response_timeout),
+      reassembler_(controller_id, response_id, response_timeout)
+{
+    validateConstruction(
+        transport_, controller_id_, response_id_, response_timeout_);
+}
+
+HandChannel::HandChannel(
+    std::string interface_name,
+    const std::uint8_t hand_id,
+    const std::chrono::milliseconds response_timeout)
+    : HandChannel(
+          std::move(interface_name), hand_id, hand_id, response_timeout)
 {
 }
 
@@ -75,25 +107,26 @@ HandChannel::HandChannel(
     std::unique_ptr<HandTransport> transport,
     const std::uint8_t hand_id,
     const std::chrono::milliseconds response_timeout)
-    : transport_(std::move(transport)),
-      hand_id_(hand_id),
-      response_timeout_(response_timeout),
-      reassembler_(hand_id, hand_id, response_timeout)
+    : HandChannel(std::move(transport), hand_id, hand_id, response_timeout)
 {
-    validateConstruction(transport_, hand_id_, response_timeout_);
 }
 
 std::uint8_t HandChannel::handId() const noexcept
 {
-    return hand_id_;
+    return controller_id_;
+}
+
+std::uint8_t HandChannel::responseId() const noexcept
+{
+    return response_id_;
 }
 
 void HandChannel::sendPacket(
     const std::uint8_t command,
     const std::vector<std::uint8_t> &payload)
 {
-    const auto bytes = encodePacket(hand_id_, command, payload);
-    for (const auto &frame : fragmentPacket(hand_id_, bytes))
+    const auto bytes = encodePacket(controller_id_, command, payload);
+    for (const auto &frame : fragmentPacket(controller_id_, bytes))
     {
         transport_->send(frame);
     }
@@ -129,7 +162,7 @@ std::optional<AoyiHandStatus> HandChannel::queryStatus()
             return std::nullopt;
         }
         const auto packet = reassembler_.push(*frame, now);
-        if (!packet || packet->hand_id != hand_id_ ||
+        if (!packet || packet->hand_id != response_id_ ||
             packet->command != kAoyiGetStatusCommand)
         {
             continue;

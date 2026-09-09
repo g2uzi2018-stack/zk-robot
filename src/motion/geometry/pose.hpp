@@ -23,7 +23,6 @@ struct Pose
     Eigen::Quaterniond orientation{Eigen::Quaterniond::Identity()};
 };
 
-// 检查位姿中的数值是否有限，并返回四元数归一化后的副本。
 //
 // 传感器或配置文件给出的四元数可能有很小的数值误差，因此合法的非单位
 // 四元数在进入几何算法时统一归一化；零四元数没有旋转意义，必须拒绝。

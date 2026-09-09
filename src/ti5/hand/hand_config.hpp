@@ -1,6 +1,5 @@
 #pragma once
 
-#include "can/can_interface_manager.hpp"
 
 #include <chrono>
 #include <cstddef>
@@ -28,7 +27,6 @@ struct HandTransportConfig
     bool validate_bitrate{true};
     std::chrono::milliseconds reconfigure_wait{100};
     std::chrono::milliseconds startup_wait{100};
-    robot::can::CanAdapterSelector adapter_selector;
 };
 
 struct HandSideConfig
@@ -36,6 +34,8 @@ struct HandSideConfig
     std::string name;
     std::string protocol;
     std::uint8_t controller_node_id{0};
+    std::uint8_t response_node_id{0};
+    std::string interface_name;
     bool required_for_body_startup{false};
     bool protocol_verified{false};
     bool discovery_enabled{false};

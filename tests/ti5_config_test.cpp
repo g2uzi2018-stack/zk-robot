@@ -112,7 +112,11 @@ int main()
                "identity JointConfig assembly mismatch");
 
         expect(hands.left.controller_node_id == 70 &&
+                   hands.left.response_node_id == 1 &&
+                   hands.left.interface_name == "can4" &&
                    hands.right.controller_node_id == 60 &&
+                   hands.right.response_node_id == 1 &&
+                   hands.right.interface_name == "can5" &&
                    !hands.left.protocol_verified &&
                    !hands.left.control_enabled &&
                    hands.transport.bitrate == 1000000,

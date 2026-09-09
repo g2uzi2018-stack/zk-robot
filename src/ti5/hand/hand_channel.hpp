@@ -26,6 +26,19 @@ public:
 class HandChannel final
 {
 public:
+    // controller_id is the CAN arbitration ID and outgoing packet hand_id.
+    // response_id is the hand_id expected in a status response; it is kept
+    // separate because some adapters/firmware use different response IDs.
+    HandChannel(std::string interface_name,
+                std::uint8_t controller_id,
+                std::uint8_t response_id,
+                std::chrono::milliseconds response_timeout);
+    HandChannel(std::unique_ptr<HandTransport> transport,
+                std::uint8_t controller_id,
+                std::uint8_t response_id,
+                std::chrono::milliseconds response_timeout);
+
+    // Legacy in-process constructor: response ID equals controller ID.
     HandChannel(std::string interface_name,
                 std::uint8_t hand_id,
                 std::chrono::milliseconds response_timeout);
@@ -34,6 +47,7 @@ public:
                 std::chrono::milliseconds response_timeout);
 
     std::uint8_t handId() const noexcept;
+    std::uint8_t responseId() const noexcept;
     std::optional<AoyiHandStatus> queryStatus();
     void commandPositions(const AoyiPositionValues &positions,
                           const AoyiSpeedValues &speeds);
@@ -43,7 +57,8 @@ private:
                     const std::vector<std::uint8_t> &payload);
 
     std::unique_ptr<HandTransport> transport_;
-    std::uint8_t hand_id_{0};
+    std::uint8_t controller_id_{0};
+    std::uint8_t response_id_{0};
     std::chrono::milliseconds response_timeout_{0};
     PacketReassembler reassembler_;
 };

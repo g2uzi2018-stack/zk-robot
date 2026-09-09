@@ -69,6 +69,10 @@ std::vector<robot::can::CanFrame> fragmentPacket(
 class PacketReassembler final
 {
 public:
+    // can_id filters the SocketCAN arbitration ID. hand_id filters the
+    // application packet byte. Responses may swap the two application IDs,
+    // so the reassembler deliberately accepts any non-zero master byte and
+    // leaves direction-specific validation to the channel.
     PacketReassembler(
         std::uint16_t can_id,
         std::uint8_t hand_id,

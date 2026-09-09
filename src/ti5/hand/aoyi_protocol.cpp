@@ -68,7 +68,7 @@ std::optional<AoyiPacket> decodePacket(
     const auto payload_length = static_cast<std::size_t>(bytes[5]);
     if (bytes.size() != 7 + payload_length ||
         bytes[2] == 0 ||
-        bytes[3] != kAoyiMasterId)
+        bytes[3] == 0)
     {
         return std::nullopt;
     }
@@ -268,8 +268,7 @@ std::optional<AoyiPacket> PacketReassembler::tryExtract()
             return std::nullopt;
         }
 
-        if (bytes_[2] != hand_id_ ||
-            bytes_[3] != kAoyiMasterId)
+        if (bytes_[2] != hand_id_ || bytes_[3] == 0)
         {
             bytes_.erase(bytes_.begin());
             continue;

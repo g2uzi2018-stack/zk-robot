@@ -24,7 +24,7 @@ namespace robot::motion
     class CartesianLinePath
     {
     public:
-        CartesianLinePath(Pose start, Pose goal) : start_(normalizedPose(start)), goal_(normalizedPose(goal))
+        CartesianLinePath(Pose start, Pose goal) : start_(normalizedPose(start)), goal_(normalizedPose(goal)) //normalizedPose检查位姿中的数值是否有限，并返回四元数归一化后的副本
         {
         }
 

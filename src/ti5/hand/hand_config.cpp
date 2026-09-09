@@ -171,32 +171,6 @@ std::chrono::milliseconds toMilliseconds(
     return std::chrono::milliseconds{static_cast<Rep>(value)};
 }
 
-void validateAdapterSelector(
-    const robot::can::CanAdapterSelector &selector,
-    const std::string &context)
-{
-    if (selector.kind != "usb_serial_short" &&
-        selector.kind != "usb_serial" &&
-        selector.kind != "id_path" &&
-        selector.kind != "sysfs_parent" &&
-        selector.kind != "device_path")
-    {
-        throwConfigError(
-            context + ".selector",
-            "不支持的 CAN 适配器 selector");
-    }
-    if (selector.value.empty())
-    {
-        throwConfigError(context + ".value", "不能为空");
-    }
-    if (selector.expected_channels == 0)
-    {
-        throwConfigError(
-            context + ".expected_channels",
-            "必须为正数");
-    }
-}
-
 robot::ti5::hand::HandSideConfig parseSide(
     const YAML::Node &hands,
     const std::string &side,
@@ -219,6 +193,11 @@ robot::ti5::hand::HandSideConfig parseSide(
             "傲意 HAND_ID 必须在 1..255 范围内");
     }
     result.controller_node_id = static_cast<std::uint8_t>(node_id);
+    const auto response_id = requireUnsigned(side_node, "response_node_id", side_context);
+    if (response_id == 0 || response_id > 0xFF) throwConfigError(side_context + ".response_node_id", "必须在 1..255 范围内");
+    result.response_node_id = static_cast<std::uint8_t>(response_id);
+    result.interface_name = requireString(side_node, "interface", side_context);
+    if (result.interface_name.empty()) throwConfigError(side_context + ".interface", "必须指定 SocketCAN 接口名");
     result.required_for_body_startup = requireBool(
         side_node,
         "required_for_body_startup",
@@ -232,7 +211,7 @@ robot::ti5::hand::HandSideConfig parseSide(
     {
         throwConfigError(
             side_context + ".interface_selector",
-            "禁止使用 adapter_channel；接口必须由协议 Discovery 决定");
+            "禁止使用 interface_selector；接口必须直接填写在 interface");
     }
 
     const auto discovery = requireMap(side_node, "discovery", side_context);
@@ -342,25 +321,6 @@ HandConfig loadHandConfig(const std::filesystem::path &config_path)
             100),
         transport_context + ".startup_wait_ms");
 
-    const auto adapter = requireMap(
-        transport,
-        "adapter_selector",
-        transport_context);
-    const auto adapter_context = transport_context + ".adapter_selector";
-    result.transport.adapter_selector.kind = requireString(
-        adapter,
-        "selector",
-        adapter_context);
-    result.transport.adapter_selector.value = requireString(
-        adapter,
-        "value",
-        adapter_context);
-    result.transport.adapter_selector.expected_channels = toSize(
-        requireUnsigned(adapter, "expected_channels", adapter_context),
-        adapter_context + ".expected_channels");
-    validateAdapterSelector(
-        result.transport.adapter_selector,
-        adapter_context);
 
     if (root["discovery"])
     {
@@ -399,11 +359,12 @@ HandConfig loadHandConfig(const std::filesystem::path &config_path)
     const auto hands = requireMap(root, "hands", context);
     result.left = parseSide(hands, "left", context + ".hands");
     result.right = parseSide(hands, "right", context + ".hands");
-    if (result.left.controller_node_id == result.right.controller_node_id)
+    if (result.left.controller_node_id == result.right.controller_node_id &&
+        result.left.interface_name == result.right.interface_name)
     {
         throwConfigError(
             context + ".hands",
-            "左右手 controller_node_id 必须不同");
+            "左右手在同一 CAN 接口上不能使用相同 controller_node_id");
     }
     return result;
 }

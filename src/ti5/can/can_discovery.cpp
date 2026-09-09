@@ -293,7 +293,6 @@ DiscoveryResult CanDiscovery::discover(
             "Invalid TI5 Discovery retry or timeout settings");
     }
 
-    std::vector<std::uint16_t> all_expected_node_ids;
     std::unordered_map<std::uint16_t, std::string> node_owners;
     std::set<std::string> bus_names;
     for (const auto &bus : logical_buses)
@@ -323,10 +322,23 @@ DiscoveryResult CanDiscovery::discover(
                     "Node ID " + std::to_string(node_id) +
                     " belongs to multiple TI5 logical CAN buses");
             }
-            all_expected_node_ids.push_back(node_id);
         }
     }
-    all_expected_node_ids = sortedNodeIds(std::move(all_expected_node_ids));
+
+    // Probing every node ID on every candidate interface is unsafe on
+    // SocketCAN: a query sent to an interface without that node is not
+    // acknowledged and increments the adapter's transmit error counter.
+    // Probe one unique anchor per logical bus first, then verify the complete
+    // node set only on the interface that answered that anchor.  This keeps
+    // automatic discovery while avoiding putting otherwise healthy buses into
+    // CAN warning/error-passive state before control starts.
+    std::vector<std::uint16_t> probe_node_ids;
+    probe_node_ids.reserve(logical_buses.size());
+    for (const auto &bus : logical_buses)
+    {
+        probe_node_ids.push_back(bus.expected_node_ids.front());
+    }
+    probe_node_ids = sortedNodeIds(std::move(probe_node_ids));
 
     DiscoveryResult result;
     std::set<std::string> unique_candidates;
@@ -340,8 +352,14 @@ DiscoveryResult CanDiscovery::discover(
         robot::common::logger()->info(
             "Scanning prepared body CAN interface {}",
             interface_name);
+        auto probe_options = options;
+        // The full scan below still applies the configured confirmation count.
+        // One anchor response is sufficient to choose where that safe full
+        // verification runs, and keeps unacknowledged cross-bus probes minimal.
+        probe_options.confirmations_required = 1;
+        probe_options.max_attempts = 1;
         result.interfaces.push_back(
-            scanInterface(interface_name, all_expected_node_ids, options));
+            scanInterface(interface_name, probe_node_ids, probe_options));
     }
     if (result.interfaces.empty())
     {
@@ -349,12 +367,84 @@ DiscoveryResult CanDiscovery::discover(
             "TI5 Discovery candidate interface list contains no valid names");
     }
 
+    // First use the anchor responses to decide which interface should be
+    // verified for each logical bus.  A complete scan is deliberately delayed
+    // until this point so that absent node IDs are never queried on unrelated
+    // interfaces.
+    const std::size_t unassigned_interface = result.interfaces.size();
+    std::vector<std::size_t> probe_assigned_interface(
+        logical_buses.size(), unassigned_interface);
+    std::vector<bool> probe_bus_conflict(logical_buses.size(), false);
+    for (std::size_t interface_index = 0;
+         interface_index < result.interfaces.size();
+         ++interface_index)
+    {
+        const auto &interface_result = result.interfaces[interface_index];
+        std::vector<std::size_t> matched_buses;
+        for (std::size_t bus_index = 0;
+             bus_index < logical_buses.size();
+             ++bus_index)
+        {
+            const auto anchor = logical_buses[bus_index].expected_node_ids.front();
+            if (containsNodeId(interface_result.confirmed_node_ids, anchor))
+            {
+                matched_buses.push_back(bus_index);
+            }
+        }
+        if (matched_buses.size() > 1)
+        {
+            for (const auto bus_index : matched_buses)
+            {
+                probe_bus_conflict[bus_index] = true;
+            }
+            continue;
+        }
+        if (matched_buses.empty())
+        {
+            continue;
+        }
+        const auto bus_index = matched_buses.front();
+        {
+            if (probe_assigned_interface[bus_index] != unassigned_interface &&
+                probe_assigned_interface[bus_index] != interface_index)
+            {
+                probe_bus_conflict[bus_index] = true;
+            }
+            else
+            {
+                probe_assigned_interface[bus_index] = interface_index;
+            }
+        }
+    }
+    for (std::size_t bus_index = 0;
+         bus_index < logical_buses.size();
+         ++bus_index)
+    {
+        if (probe_bus_conflict[bus_index] ||
+            probe_assigned_interface[bus_index] == unassigned_interface)
+        {
+            continue;
+        }
+        const auto interface_index = probe_assigned_interface[bus_index];
+        const auto full_scan = scanInterface(
+            result.interfaces[interface_index].interface_name,
+            logical_buses[bus_index].expected_node_ids,
+            options);
+        if (!full_scan.error.empty())
+        {
+            result.interfaces[interface_index].error = full_scan.error;
+            result.interfaces[interface_index].confirmed_node_ids.clear();
+            continue;
+        }
+        result.interfaces[interface_index].confirmed_node_ids =
+            full_scan.confirmed_node_ids;
+    }
+
     // Interface indices and logical-bus indices are different domains.  In
     // particular, a filtered discovery may have three logical buses while the
     // matching device is candidate interface index 3.  Using
     // logical_buses.size() as the sentinel would then discard that valid
     // mapping.
-    const std::size_t unassigned_interface = result.interfaces.size();
     std::vector<std::size_t> assigned_interface(
         logical_buses.size(), unassigned_interface);
     std::vector<bool> bus_conflict(logical_buses.size(), false);

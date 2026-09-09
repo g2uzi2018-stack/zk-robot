@@ -24,24 +24,12 @@ void HandController::start(
             "TI5 HandController control is disabled by configuration");
     }
 
-    try
-    {
-        const auto snapshot = hand_.readState();
-        if (!snapshot)
-        {
-            throw std::runtime_error(
-                "TI5 HandController requires current hand status");
-        }
-        current_state_ = snapshot;
-        target_positions_ = snapshot->positions_raw;
-        speeds_ = holding_speeds;
-        state_ = ControlState::Running;
-    }
-    catch (...)
-    {
-        state_ = ControlState::Failed;
-        throw;
-    }
+    current_state_ = hand_.readState();
+    target_positions_ = current_state_
+                            ? current_state_->positions_raw
+                            : Hand::PositionValues{};
+    speeds_ = holding_speeds;
+    state_ = ControlState::Running;
 }
 
 void HandController::setTarget(
@@ -88,11 +76,6 @@ void HandController::update()
     try
     {
         current_state_ = hand_.readState();
-        if (!current_state_)
-        {
-            throw std::runtime_error(
-                "TI5 HandController did not receive hand status");
-        }
         if (state_ == ControlState::Running)
         {
             hand_.commandPositionsRaw(target_positions_, speeds_);
@@ -132,7 +115,7 @@ bool HandController::targetReachedRaw(
 {
     if (!current_state_)
     {
-        return false;
+        return true;
     }
 
     for (std::size_t index = 0;

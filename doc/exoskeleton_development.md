@@ -35,9 +35,9 @@ SDK slot 原始计数 → 弧度
 | [`src/input/exoskeleton/exoskeleton_protocol.hpp`](../src/input/exoskeleton/exoskeleton_protocol.hpp) | 帧常量、字段结构和计数转弧度常量 |
 | [`src/input/exoskeleton/exoskeleton_protocol.cpp`](../src/input/exoskeleton/exoskeleton_protocol.cpp) | 帧校验和 payload 字段解析 |
 | [`src/input/exoskeleton/exoskeleton_stream_decoder.cpp`](../src/input/exoskeleton/exoskeleton_stream_decoder.cpp) | 拆包、粘包、噪声和多种帧长度重同步 |
-| [`tools/exoskeleton_serial.py`](../tools/exoskeleton_serial.py) | Python 工具共用的 VID:PID 串口发现逻辑 |
-| [`tools/exoskeleton_joint_monitor.py`](../tools/exoskeleton_joint_monitor.py) | 只显示原始值和弧度，不控制任何执行器 |
-| [`tools/exoskeleton_3d_viewer.py`](../tools/exoskeleton_3d_viewer.py) | 7 自由度机械结构的实时/演示 3D 观察器 |
+| [`tools/exoskeleton/exoskeleton_serial.py`](../tools/exoskeleton/exoskeleton_serial.py) | Python 工具共用的 VID:PID 串口发现逻辑 |
+| [`tools/exoskeleton/exoskeleton_joint_monitor.py`](../tools/exoskeleton/exoskeleton_joint_monitor.py) | 只显示原始值和弧度，不控制任何执行器 |
+| [`tools/exoskeleton/exoskeleton_3d_viewer.py`](../tools/exoskeleton/exoskeleton_3d_viewer.py) | 7 自由度机械结构的实时/演示 3D 观察器 |
 | [`tests/exoskeleton_protocol_test.cpp`](../tests/exoskeleton_protocol_test.cpp) | 协议和解码器测试 |
 | [`tests/exoskeleton_runtime_test.cpp`](../tests/exoskeleton_runtime_test.cpp) | 伪终端连接、有效帧、断开和 stale 行为测试 |
 
@@ -214,7 +214,7 @@ slot 5 和 slot 6 位于同一个腕部安装位置，代表腕部的两个自�
 
 ### 6.1 结构对应关系
 
-[`tools/exoskeleton_3d_viewer.py`](../tools/exoskeleton_3d_viewer.py) 按实际机械链显示 7 个已定义自由度：
+[`tools/exoskeleton/exoskeleton_3d_viewer.py`](../tools/exoskeleton/exoskeleton_3d_viewer.py) 按实际机械链显示 7 个已定义自由度：
 
 | slot | 机械结构 | 模型处理 |
 | ---: | --- | --- |
@@ -259,13 +259,13 @@ slot 5 和 slot 6 共享一个腕部位置；slot 2 和 slot 4 保持为两个�
 不接串口的演示模式：
 
 ```bash
-python3 tools/exoskeleton_3d_viewer.py --demo
+python3 tools/exoskeleton/exoskeleton_3d_viewer.py --demo
 ```
 
 实时模式默认按 VID:PID 查找：
 
 ```bash
-python3 tools/exoskeleton_3d_viewer.py
+python3 tools/exoskeleton/exoskeleton_3d_viewer.py
 ```
 
 常用参数：
@@ -357,8 +357,8 @@ ctest --test-dir build -R '^exoskeleton_'
 ### 8.3 Python 工具的快速检查
 
 ```bash
-python3 -m py_compile tools/exoskeleton_serial.py tools/exoskeleton_joint_monitor.py tools/exoskeleton_3d_viewer.py
-python3 tools/exoskeleton_3d_viewer.py --demo --no-browser
+python3 -m py_compile tools/exoskeleton/exoskeleton_serial.py tools/exoskeleton/exoskeleton_joint_monitor.py tools/exoskeleton/exoskeleton_3d_viewer.py
+python3 tools/exoskeleton/exoskeleton_3d_viewer.py --demo --no-browser
 ```
 
 演示服务启动后，可在浏览器中确认模型、绿色地面、鼠标旋转、WASD、升降和全屏按钮；关闭服务后不会触碰串口。

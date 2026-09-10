@@ -1,85 +1,51 @@
 # 调试工具说明
 
-测试总入口与验证记录：[测试代码合集](../doc/测试代码合集.md)。
+`tools/` 按功能分为两个目录：
 
-本目录中的程序可能打开实体 CAN 接口或让机器人运动，不由 `ctest` 自动运行。
+- `tools/ti5/`：TI5 T170C 本体调试工具。
+- `tools/exoskeleton/`：外骨骼数据读取、观察和遥操作工具。
 
-- `ti5_zero_home.cpp`：头部和双臂回零、保持和受控停止菜单。
-- `ti5_direction_test.cpp`：头部和双臂逐轴小幅方向确认。
-- `ti5_arm_check.cpp`：基于正式 Arm 模型坐标完成整臂读取、当前位置保持、
-  单轴小幅往返和 STOP 状态确认；当前位置超出驱动器目标范围时拒绝运动，
-  要求先运行回零工具。
-- `ti5_hand_check.cpp`：只打开 `hands.yaml` 直接绑定的傲意灵巧手 SocketCAN，支持左手、右手或双手的状态读取、六通道或指定单通道小幅往返，以及按键逐关节控制；不会初始化双臂和头部。
-- `ti5_full_check.cpp`：整机组合测试，按顺序小幅测试双臂、头部和左右灵巧手；
-  需要显式构建和现场确认，默认不参与普通构建。
-- `exoskeleton_monitor.cpp`：只读打开外骨骼并显示遥测，不打开机器人 CAN。
-- `exoskeleton_tiago_teleop.cpp`：将外骨骼双臂、扳机和左手柄映射到 TIAGo；
-  默认排除在普通构建之外，必须显式构建并传入 `--confirm`。
-- `exoskeleton_joint_monitor.py`：固定布局显示左右臂 8 个官方编码器槽位，
-  只更新数值，内置 legacy 帧解析，默认按 USB VID:PID 自动找串口，便于穿戴状态下逐轴
-  标定；不连接执行器。
-- `exoskeleton_3d_viewer.py`：通过本地浏览器显示带厚度、遮挡和明暗的低多边形 3D 七自由度机械结构；
-  slot 0/1 是肩部前后和侧向电机，slot 2 是大臂中段旋转，slot 3 是肘部屈曲，slot 4 是小臂旋转，
-  slot 5/6 是腕部两个电机，slot 7 仅显示不参与姿态；每个槽位直接按弧度和现场正方向符号驱动对应
-  转轴。支持 `--demo` 离线演示，不连接执行器；支持鼠标拖动旋转视角、滚轮缩放、WASD 平移、
-  空格上升、Shift 下降和全屏，并绘制绿色网格地面与黄色面向箭头辅助判断。
+这些程序可能打开实体 CAN、串口或让机器人运动，不由 `ctest` 自动运行。
+编译和实机操作前应关闭其他控制程序，并保证物理急停可以立即触达。
 
-外骨骼联调时，下面两个 Python 读取器二选一；切换到另一个之前先退出当前程序：
+## TI5
 
-```bash
-python3 tools/exoskeleton_joint_monitor.py
-python3 tools/exoskeleton_3d_viewer.py
-```
+- [`ti5/ti5_joint_cli.cpp`](ti5/ti5_joint_cli.cpp)：交互式关节控制台。
+  通过 CAN 自动发现腰部、头部和双臂总线，主菜单可进入头部、左臂、右臂、
+  左手、右手和腰部；使用数字键选择关节，用方向键或 `+`/`-` 调整目标。
+  头部、双臂和腰部使用弧度，灵巧手使用 raw 位置单位。
+- [`ti5/ti5_zero_home.cpp`](ti5/ti5_zero_home.cpp)：头部和双臂 17 轴回零及
+  特定点工具。支持电机角零点回零、双臂受控缓降后 STOP、记录当前位置特定点、
+  以及运行已记录特定点；不控制腰部、折叠机构和灵巧手。
 
-两个工具默认匹配 `VID:PID=0x0483:0x5740`，也可以用 `--vid` 和 `--pid` 覆盖；只有
-需要临时绕过自动发现时才使用 `--port /dev/ttyACM...`。
+TI5 工具的用途、参数、覆盖范围和操作入口见
+[`doc/ti5测试代码合集.md`](../doc/ti5测试代码合集.md)。
 
-需要使用 C++ 监视器时，也要先退出 Python 读取器：
+## 外骨骼
 
-```bash
-cmake --build build --target exoskeleton_monitor -j2
-./build/exoskeleton_monitor /path/to/exoskeleton-config.yaml
-```
+- [`exoskeleton/exoskeleton_monitor.cpp`](exoskeleton/exoskeleton_monitor.cpp)：
+  只读显示外骨骼关节、手柄和 IMU 遥测，不连接机器人执行器。
+- [`exoskeleton/exoskeleton_joint_monitor.py`](exoskeleton/exoskeleton_joint_monitor.py)：
+  在终端显示外骨骼 8 个编码器槽位的原始值和弧度，不控制执行器。
+- [`exoskeleton/exoskeleton_3d_viewer.py`](exoskeleton/exoskeleton_3d_viewer.py)：
+  通过浏览器显示外骨骼实时或离线演示的 3D 诊断视图。
+- [`exoskeleton/exoskeleton_tiago_teleop.cpp`](exoskeleton/exoskeleton_tiago_teleop.cpp)：
+  将外骨骼输入映射到 TIAGo；只有完成标定、映射和安全确认后才能发送控制目标。
+- [`exoskeleton/exoskeleton_serial.py`](exoskeleton/exoskeleton_serial.py)：
+  Python 工具共用的 USB VID:PID 串口发现逻辑。
 
-当前工作树不提供固定的外骨骼运行配置文件，配置格式正在重新规划；上面的路径需要替换为实际配置。
-现有 loader 中，`exoskeleton.serial.device` 为空或为 `auto` 时按 `usb_vid`、`usb_pid` 发现设备，
-不应把 `/dev/ttyACM0` 写成长期身份。
-
-没有外骨骼时可以先看离线演示：
+外骨骼读取器：
 
 ```bash
-python3 tools/exoskeleton_3d_viewer.py --demo
+python3 tools/exoskeleton/exoskeleton_joint_monitor.py
+python3 tools/exoskeleton/exoskeleton_3d_viewer.py
 ```
 
-官方读取器快照、协议布局和弧度换算见 `doc/exoskeleton_development.md`。
-当前 Python 监视器和 C++ 实时路径都不依赖完整厂商 SDK；需要 QnTP 校准、无线、
-触觉、DFU 或厂商 3D 工具时，应向厂商索取对应版本的独立工具。
-完成 8 个 slot（其中 slot 7 未定义）的现场逐轴标定后，才允许把外骨骼数据交给任何实体控制程序。
+没有外骨骼时可运行离线演示：
 
-方向工具的运动命令经过正式 `Joint` 限位检查，但刻意使用恒等坐标换算，继续记录
-“电机输出角正增量”对应的实体运动方向。自然下垂回零属于电机零点与边界恢复流程，
-不会整体迁入使用模型坐标的 Arm；Arm 检查发现当前位置越界时会要求先运行回零工具。
+```bash
+python3 tools/exoskeleton/exoskeleton_3d_viewer.py --demo
+```
 
-回零、方向和整臂工具默认排除腰部、折叠机构和傲意手；整机组合工具按流程测试
-双臂、头部和灵巧手。独立灵巧手工具直接使用 `hands.yaml` 为每只手配置的 SocketCAN 接口和 ID。
-编译及操作前必须阅读 `doc/` 中对应文档，关闭其他 CAN 控制进程，并保证物理急停
-可以立即触达。
-
-
-### 灵巧手按键控制
-
-手部配置直接指定 interface 和 controller_node_id，例如左手 can4 / 70、右手 can5 / 60。设备没有提供当前状态反馈时，按键模式使用 --initial-raw 作为基准位置，默认 30000。
-
-    export ZK_ROBOT_CONFIRM_HAND_CHECK=YES
-    export ZK_ROBOT_CONFIRM_UNVERIFIED_HAND_TEST=YES
-
-    ./build/tools/ti5_hand_check \
-      --side left \
-      --interactive \
-      --initial-raw 30000 \
-      --delta-raw 20 \
-      --speed-raw 1 \
-      --commission
-
-进入控制后，数字键 1～6 选择关节，向上键增加、向下键减少一个步长，+/- 也可调整，q 退出。--side right 使用右手配置；--side both 会依次控制左右手。
-
+外骨骼协议、标定和安全边界见
+[`doc/exoskeleton_development.md`](../doc/exoskeleton_development.md)。

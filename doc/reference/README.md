@@ -9,4 +9,4 @@
   `doc/exoskeleton_development.md` 中的现场映射记录。
 
 当前实时项目代码使用 `src/input/exoskeleton/` 和
-`tools/exoskeleton_joint_monitor.py` 的独立解析实现，不依赖本目录文件。
+`tools/exoskeleton/exoskeleton_joint_monitor.py` 的独立解析实现，不依赖本目录文件。

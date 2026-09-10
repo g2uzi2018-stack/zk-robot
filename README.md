@@ -68,7 +68,7 @@ ctest --test-dir build --output-on-failure
 先做只读监测：
 
 ```bash
-python3 tools/exoskeleton_joint_monitor.py
+python3 tools/exoskeleton/exoskeleton_joint_monitor.py
 cmake --build build --target exoskeleton_monitor -j2
 ./build/exoskeleton_monitor /path/to/exoskeleton-config.yaml
 ```
@@ -96,16 +96,13 @@ cmake --build build --target robot -j2
 这些工具不参与默认构建，必须显式编译：
 
 ```bash
-cmake --build build --target ti5_zero_home ti5_direction_test ti5_full_check -j2
+cmake --build build --target ti5_joint_cli ti5_zero_home -j2
+./build/tools/ti5_joint_cli --dry-run
 ./build/tools/ti5_zero_home --dry-run
-./build/tools/ti5_direction_test --help
-./build/tools/ti5_full_check --dry-run
 ```
 
+- `ti5_joint_cli`：TI5 头部、双臂、双手和腰部的交互式关节控制台。
 - `ti5_zero_home`：头部和双臂回零、保持或受控停止菜单。
-- `ti5_direction_test`：头部和双臂逐轴小幅方向确认。
-- `ti5_full_check`：双臂、头部和左右灵巧手的整机组合小幅往返测试。
 
-实机操作方法和安全约束见 `doc/TI5_T170C_一键回零测试.md`、
-`doc/ti5_motor_direction_record.md`。腰部和折叠机构的抱闸、停止及掉线行为尚未完成验证，
-不属于当前 Motor 阶段的运动范围。
+实机操作方法和安全约束见 `doc/ti5测试代码合集.md`。腰部和折叠机构的抱闸、停止及掉线行为
+尚未完成验证，操作前必须确认现场急停可达并关闭其他 CAN 控制程序。

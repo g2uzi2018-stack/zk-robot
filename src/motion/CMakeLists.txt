@@ -13,3 +13,13 @@ target_link_libraries(robot_motion INTERFACE
 target_compile_features(robot_motion INTERFACE
     cxx_std_17
 )
+
+# 初始化阶段的可选 URDF 数据加载层；不让 XML 依赖进入原有纯数学目标。
+option(BUILD_URDF_CHAIN_LOADER "Build the offline URDF chain loader and its tests" OFF)
+if(BUILD_URDF_CHAIN_LOADER)
+    find_package(LibXml2 REQUIRED)
+    add_library(robot_urdf_chain STATIC
+        kinematics/urdf_chain.cpp
+    )
+    target_link_libraries(robot_urdf_chain PUBLIC robot_motion PRIVATE LibXml2::LibXml2)
+endif()

@@ -163,3 +163,11 @@ target_link_libraries(exoskeleton_runtime_test PRIVATE
 )
 
 add_test(NAME exoskeleton_runtime COMMAND exoskeleton_runtime_test)
+
+if(TARGET robot_urdf_chain)
+    add_executable(motion_urdf_chain_test motion_urdf_chain_test.cpp)
+    target_link_libraries(motion_urdf_chain_test PRIVATE robot_urdf_chain)
+    add_test(NAME motion_urdf_chain COMMAND motion_urdf_chain_test)
+    add_test(NAME motion_urdf_chain_t170c COMMAND motion_urdf_chain_test
+        "${PROJECT_SOURCE_DIR}/T170C-LX-AGX-URDF-1.0/urdf/T170C-V1.1-URDF-1.0_mujoco.urdf")
+endif()

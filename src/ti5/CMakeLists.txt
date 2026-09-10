@@ -107,7 +107,12 @@ target_link_libraries(ti5_hand PUBLIC
     ti5_hand_transport
 )
 
+add_library(ti5_waist STATIC waist/waist.cpp)
+target_include_directories(ti5_waist PUBLIC ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(ti5_waist PUBLIC ti5_joint)
+
 add_library(ti5_controller STATIC
+    controller/waist_controller.cpp
     controller/arm_controller.cpp
     controller/head_controller.cpp
     controller/hand_controller.cpp
@@ -118,6 +123,7 @@ target_include_directories(ti5_controller PUBLIC
 )
 
 target_link_libraries(ti5_controller PUBLIC
+    ti5_waist
     ti5_arm
     ti5_head
     ti5_hand

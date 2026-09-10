@@ -3,7 +3,9 @@
 #include "ti5/config/config_loader.hpp"
 #include "ti5/controller/arm_controller.hpp"
 #include "ti5/controller/head_controller.hpp"
+#include "ti5/controller/waist_controller.hpp"
 #include "ti5/head/head.hpp"
+#include "ti5/waist/waist.hpp"
 #include "ti5/joint/joint_config_builder.hpp"
 #include "can/can_interface_manager.hpp"
 #include "ti5/controller/hand_controller.hpp"
@@ -80,6 +82,16 @@ constexpr std::array<JointDirection, 3> kHeadDirections{{
     {"机器人左方", "机器人右方"},
     {"机器人后方", "机器人前方"},
     {"机器人右方", "机器人左方"},
+}};
+
+// 腰部的各轴正负方向尚未完成逐轴实机标定；CLI 只显示坐标增减，
+// 不把未验证的现场方向写成确定结论。
+constexpr std::array<JointDirection, 5> kWaistDirections{{
+    {"增加 yaw 角", "减少 yaw 角"},
+    {"增加 fold_p3 角", "减少 fold_p3 角"},
+    {"增加 fold_p2 角", "减少 fold_p2 角"},
+    {"增加 fold_p1 角", "减少 fold_p1 角"},
+    {"增加 fold_r 角", "减少 fold_r 角"},
 }};
 
 constexpr std::array<JointDirection, 7> kLeftArmDirections{{
@@ -163,6 +175,23 @@ void prepareArmForControl(Arm &arm)
     }
 }
 
+void startWaistForControl(Waist &waist, WaistController &controller)
+{
+    if (controller.state() == WaistController::ControlState::Failed)
+        controller.reset();
+    if (controller.state() == WaistController::ControlState::Running)
+        return;
+
+    // 腰部没有 STOP 恢复路径。若 Waist 仍处于已建立的 mode=8，
+    // 只恢复 Controller；其他状态则重新执行只读准备和当前位置启动。
+    if (waist.controlState() != WaistControlState::PositionControlActive)
+    {
+        waist.prepare();
+        waist.startPositionControlAtCurrentPosition();
+    }
+    controller.start();
+}
+
 void drawHead(const HeadController &controller, std::size_t selected)
 {
     static constexpr const char *names[] = {
@@ -206,6 +235,31 @@ void drawArm(const ArmController &controller,
     std::cout << "\n↑：" << directions[selected].up
               << "\n↓：" << directions[selected].down
               << "\n数字键选择关节，↑/↓ 调整 0.01 rad，q 返回关节选择并保持当前目标\n"
+              << std::flush;
+}
+
+template <std::size_t N>
+void drawWaist(const WaistController &controller,
+               std::size_t selected,
+               const std::array<std::string, N> &names,
+               const std::array<JointDirection, N> &directions)
+{
+    const auto state = controller.currentState();
+    const auto target = controller.targetPositions();
+    std::cout << "\033[2J\033[HTI5 Waist Control\n\n";
+    for (std::size_t index = 0; index < N; ++index)
+        std::cout << (index == selected ? "> " : "  ") << index + 1
+                  << ". " << names[index] << "\n";
+    std::cout << "\n当前关节: " << names[selected]
+              << "\n目标角度: " << std::fixed << std::setprecision(4)
+              << target[selected] << " rad\n实际角度: ";
+    if (state && state->joints[selected].position_rad)
+        std::cout << *state->joints[selected].position_rad << " rad\n";
+    else
+        std::cout << "等待反馈\n";
+    std::cout << "\n↑：" << directions[selected].up
+              << "\n↓：" << directions[selected].down
+              << "\n数字键选择关节，↑/↓ 调整 0.05 rad，q 返回关节选择并保持 mode 8\n"
               << std::flush;
 }
 
@@ -286,6 +340,12 @@ void controlLoop(Controller &controller,
 void updateRunningArm(ArmController &controller)
 {
     if (controller.state() == ArmController::ControlState::Running)
+        controller.update();
+}
+
+void updateRunningWaist(WaistController &controller)
+{
+    if (controller.state() == WaistController::ControlState::Running)
         controller.update();
 }
 
@@ -438,9 +498,9 @@ int main(int argc, char **argv)
                           << "  --hand-step-raw 1..200 (默认 50；兼容 --delta-raw)\n"
                           << "  --initial-raw 0..65535 (无反馈初值，默认 30000)\n"
                           << "  --speed-raw 1..20 (默认 5)\n"
-                          << "主菜单: 1 头部 / 2 左臂 / 3 右臂 / 4 左手 / 5 右手\n"
+                          << "主菜单: 1 头部 / 2 左臂 / 3 右臂 / 4 左手 / 5 右手 / 6 腰部\n"
                           << "数字键选关节，↑/↓ 或 +/- 调整，q 逐级返回/退出。\n"
-                          << "头部/双臂每步 0.05 rad；手部使用 raw 单位。\n"
+                          << "头部/双臂/腰部每步 0.05 rad；手部使用 raw 单位。\n"
                           << "--dry-run 仅检查配置，不打开 CAN。\n"
                           << "未开放手部配置时，--commission 还需 ZK_ROBOT_CONFIRM_UNVERIFIED_HAND_TEST=YES。\n";
                 return 0;
@@ -474,19 +534,25 @@ int main(int argc, char **argv)
         }
         std::vector<LogicalCanBus> requested;
         for (const auto &bus : robot_config.can_buses)
-            if (bus.name == "head" || bus.name == "left_arm" || bus.name == "right_arm")
+            if (bus.name == "waist_fold" || bus.name == "head" ||
+                bus.name == "left_arm" || bus.name == "right_arm")
                 requested.push_back(bus);
-        if (requested.size() != 3)
-            throw std::runtime_error("robot.yaml 缺少 head/left_arm/right_arm 总线");
+        if (requested.size() != 4)
+            throw std::runtime_error(
+                "robot.yaml 缺少 waist_fold/head/left_arm/right_arm 总线");
         if (candidates.empty()) candidates = {"can0", "can1", "can2", "can3"};
         const auto discovery = CanDiscovery{}.discover(
             requested, makeDiscoveryOptions(can_config), candidates);
         if (!discovery.success)
-            throw std::runtime_error("头部和双臂 CAN 总线发现失败");
+            throw std::runtime_error("腰部、头部和双臂 CAN 总线发现失败");
         const auto configs = makeJointConfigs(robot_config, safety_config);
+        const auto &waist_bus_config = logicalBusFor(robot_config, "waist_fold");
         const auto &head_bus_config = logicalBusFor(robot_config, "head");
         const auto &left_bus_config = logicalBusFor(robot_config, "left_arm");
         const auto &right_bus_config = logicalBusFor(robot_config, "right_arm");
+        auto waist_bus = std::make_unique<CanBus>(
+            interfaceFor(discovery, "waist_fold"),
+            makeBusOptions(waist_bus_config, can_config));
         auto head_bus = std::make_unique<CanBus>(
             interfaceFor(discovery, "head"),
             makeBusOptions(head_bus_config, can_config));
@@ -496,31 +562,36 @@ int main(int argc, char **argv)
         auto right_bus = std::make_unique<CanBus>(
             interfaceFor(discovery, "right_arm"),
             makeBusOptions(right_bus_config, can_config));
+        Waist waist(std::move(waist_bus), configs);
         Head head(std::move(head_bus), configs);
         Arm left_arm(ArmSide::Left, std::move(left_bus), configs);
         Arm right_arm(ArmSide::Right, std::move(right_bus), configs);
+        WaistController waist_controller(waist);
         HeadController head_controller(head);
         ArmController left_controller(left_arm);
         ArmController right_controller(right_arm);
         std::unique_ptr<HandSession> left_hand, right_hand;
         RawTerminal terminal;
-        auto pumpArms = [&left_controller, &right_controller]()
+        auto pumpControllers = [&left_controller, &right_controller,
+                                &waist_controller]()
         {
             updateRunningArm(left_controller);
             updateRunningArm(right_controller);
+            updateRunningWaist(waist_controller);
         };
 
         const std::array<std::string, 3> head_names{{"neck_yaw", "neck_pitch", "neck_roll"}};
         const std::array<std::string, 7> left_names{{"left_shoulder_pitch", "left_shoulder_roll", "left_shoulder_yaw", "left_elbow_yaw", "left_wrist_pitch", "left_wrist_yaw", "left_wrist_roll"}};
         const std::array<std::string, 7> right_names{{"right_shoulder_pitch", "right_shoulder_roll", "right_shoulder_yaw", "right_elbow_yaw", "right_wrist_pitch", "right_wrist_yaw", "right_wrist_roll"}};
+        const std::array<std::string, 5> waist_names{{"waist_yaw", "fold_p3", "fold_p2", "fold_p1", "fold_r"}};
         for (;;)
         {
             std::cout << "\033[2J\033[HTI5 Joint CLI\n\n"
-                      << "1. 头部\n2. 左臂\n3. 右臂\n4. 左手\n5. 右手\n\n"
-                      << "按 1/2/3/4/5 选择部件，q 退出程序\n" << std::flush;
-            const unsigned char key = waitForMenuKey(pumpArms);
+                      << "1. 头部\n2. 左臂\n3. 右臂\n4. 左手\n5. 右手\n6. 腰部\n\n"
+                      << "按 1/2/3/4/5/6 选择部件，q 退出程序\n" << std::flush;
+            const unsigned char key = waitForMenuKey(pumpControllers);
             if (key == 'q' || key == 'Q') break;
-            if (key < '1' || key > '5') continue;
+            if (key < '1' || key > '6') continue;
             if (key == '4' || key == '5')
             {
                 auto &session = key == '4' ? left_hand : right_hand;
@@ -530,7 +601,7 @@ int main(int argc, char **argv)
                     for (;;)
                     {
                         jointMenu(title, hand_names);
-                        const auto selected_key = waitForMenuKey(pumpArms);
+                        const auto selected_key = waitForMenuKey(pumpControllers);
                         if (selected_key == 'q' || selected_key == 'Q') break;
                         if (selected_key < '1' || selected_key > '6') continue;
                         if (!session)
@@ -541,12 +612,12 @@ int main(int argc, char **argv)
                         auto next_hand = std::chrono::steady_clock::now();
                         controlLoop(*session, session->targetPositions(), 6, selected_key - '1',
                             [&]() {
-                                pumpArms();
+                                pumpControllers();
                                 const auto now = std::chrono::steady_clock::now();
                                 if (now >= next_hand) {
                                     session->update();
                                     next_hand = std::chrono::steady_clock::now() + std::chrono::milliseconds(50);
-                                    pumpArms();
+                                    pumpControllers();
                                 }
                             },
                             [title](const auto &s, std::size_t n) { drawHand(s, n, title); });
@@ -558,7 +629,7 @@ int main(int argc, char **argv)
                     if (session) session->pause();
                     std::cout << "\n手部控制失败: " << error.what()
                               << "\n按任意键返回部件菜单\n" << std::flush;
-                    waitForMenuKey(pumpArms);
+                    waitForMenuKey(pumpControllers);
                 }
                 continue;
             }
@@ -567,7 +638,7 @@ int main(int argc, char **argv)
                 for (;;)
                 {
                     jointMenu("头部", head_names);
-                    const unsigned char key = waitForMenuKey(pumpArms);
+                    const unsigned char key = waitForMenuKey(pumpControllers);
                     if (key == 'q' || key == 'Q') break;
                     if (key >= '1' && key <= '3')
                     {
@@ -575,10 +646,10 @@ int main(int argc, char **argv)
                         head.startPositionControlAtCurrentPosition();
                         head_controller.start();
                         controlLoop(head_controller, head_controller.targetPositions(), 3, key - '1',
-                                    [&head_controller, &pumpArms]()
+                                    [&head_controller, &pumpControllers]()
                                     {
                                         head_controller.update();
-                                        pumpArms();
+                                        pumpControllers();
                                     },
                                     [](const auto &controller, std::size_t selected) { drawHead(controller, selected); });
                         head_controller.stopAndConfirm();
@@ -590,7 +661,7 @@ int main(int argc, char **argv)
                 for (;;)
                 {
                     jointMenu("左臂", left_names);
-                    const unsigned char key = waitForMenuKey(pumpArms);
+                    const unsigned char key = waitForMenuKey(pumpControllers);
                     if (key == 'q' || key == 'Q') break;
                     if (key >= '1' && key <= '7')
                     {
@@ -603,17 +674,17 @@ int main(int argc, char **argv)
                             left_controller.start();
                         }
                         controlLoop(left_controller, left_controller.targetPositions(), 7, key - '1',
-                                    pumpArms,
+                                    pumpControllers,
                                     [&left_names](const auto &controller, std::size_t selected) { drawArm(controller, selected, left_names, kLeftArmDirections, "Left Arm"); });
                     }
                 }
             }
-            else
+            else if (key == '3')
             {
                 for (;;)
                 {
                     jointMenu("右臂", right_names);
-                    const unsigned char key = waitForMenuKey(pumpArms);
+                    const unsigned char key = waitForMenuKey(pumpControllers);
                     if (key == 'q' || key == 'Q') break;
                     if (key >= '1' && key <= '7')
                     {
@@ -626,15 +697,40 @@ int main(int argc, char **argv)
                             right_controller.start();
                         }
                         controlLoop(right_controller, right_controller.targetPositions(), 7, key - '1',
-                                    pumpArms,
+                                    pumpControllers,
                                     [&right_names](const auto &controller, std::size_t selected) { drawArm(controller, selected, right_names, kRightArmDirections, "Right Arm"); });
+                    }
+                }
+            }
+            else
+            {
+                for (;;)
+                {
+                    jointMenu("腰部", waist_names);
+                    const unsigned char key = waitForMenuKey(pumpControllers);
+                    if (key == 'q' || key == 'Q') break;
+                    if (key >= '1' && key <= '5')
+                    {
+                        startWaistForControl(waist, waist_controller);
+                        controlLoop(
+                            waist_controller,
+                            waist_controller.targetPositions(),
+                            5,
+                            key - '1',
+                            pumpControllers,
+                            [&waist_names](const auto &controller,
+                                           std::size_t selected)
+                            {
+                                drawWaist(controller, selected,
+                                          waist_names, kWaistDirections);
+                            });
                     }
                 }
             }
         }
 
-        // 即使用户从主菜单直接退出，也向三条部件总线发出一次 STOP。
-        // 每个部件独立确认，单条总线异常不会阻止其它部件停止。
+        // 头部退出时请求并确认 STOP；腰部不提供 STOP 路径，
+        // 双臂和腰部保留最后一个位置目标，让 mode 8 继续承担软件保持。
         auto stopOnExit = [](auto &component, const char *name)
         {
             try

@@ -163,3 +163,7 @@ target_link_libraries(exoskeleton_runtime_test PRIVATE
 )
 
 add_test(NAME exoskeleton_runtime COMMAND exoskeleton_runtime_test)
+
+add_executable(ti5_waist_test ti5_waist_test.cpp)
+target_link_libraries(ti5_waist_test PRIVATE ti5_controller)
+add_test(NAME ti5_waist COMMAND ti5_waist_test)

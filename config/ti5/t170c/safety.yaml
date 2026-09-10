@@ -35,7 +35,7 @@ control_modes:
 position_limits:
   waist_yaw:
     min: -1.570796327
-    max: 1.570796327
+    max: 3.141592653
     verified_on_robot: false
 
   # ID 2 同时服务 waist_pitch 和 Fold。
@@ -66,8 +66,8 @@ position_limits:
     verified_on_robot: false
 
   neck_pitch:
-    min: -0.523598776
-    max: 0.523598776
+    min: -0.723598776
+    max: 0.723598776
     verified_on_robot: false
 
   neck_roll:

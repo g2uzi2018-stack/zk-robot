@@ -56,7 +56,7 @@ constexpr double kFinalToleranceRad = 0.012;
 constexpr double kDriverBoundaryCaptureOvershootRad = 0.01;
 constexpr double kMaximumVelocityRadPerSecond = 0.25;
 constexpr double kLoweringVelocityRadPerSecond = 0.10;
-constexpr double kMaximumAutomaticTravelRad = 2.00;
+constexpr double kMaximumAutomaticTravelRad = 3.50;
 constexpr double kMaximumShoulderRollRecoveryTravelRad = 1.62;
 constexpr double kMaximumDriverBoundaryCaptureRad = 0.12;
 constexpr std::int32_t kDriverBoundaryCaptureInsetCounts = 4;
@@ -71,6 +71,8 @@ const std::set<std::string> kControlledBuses{
     "left_arm",
     "right_arm",
 };
+constexpr const char *kWaistBusName = "waist_fold";
+constexpr const char *kWaistYawJointName = "waist_yaw";
 
 // 2026-08-23 菜单 2 完成自然下垂后，只读采样 3 秒、每轴 60 帧；
 // 所有轴 mode=0、fault=0，且每轴 60 帧完全稳定。这里保存 CAN 原始
@@ -217,7 +219,7 @@ void printUsage(const char *program)
         << "用法：\n"
         << "  " << program << " [--dry-run] [--no-bring-up]\n\n"
         << "默认回零范围：头部 3 轴 + 左臂 7 轴 + 右臂 7 轴。\n"
-        << "固定排除：waist_yaw、Fold_P1/P2/P3/R 和傲意手。\n"
+        << "菜单 1/2 固定排除腰部折叠组和傲意手；菜单 3/4 额外记录并运行 waist_yaw。\n"
         << "--dry-run       只打印计划，不打开 CAN，不发送任何帧\n"
         << "--no-bring-up   不重配 CAN；要求本体接口已经 UP/1 Mbps\n";
 }
@@ -326,7 +328,7 @@ MenuAction promptMenuAction()
         << "  1 = 头部和双臂回到 CAN 电机零点并保持\n"
         << "  2 = 双臂缓慢下放到自然下垂参考的第二中间点，再发送 0x02 STOP\n"
         << "      到达后会暂停，等操作者托稳并二次确认才 STOP\n"
-        << "  3 = 只读记录当前 17 轴姿态为特定点\n"
+        << "  3 = 只读记录当前 18 轴姿态（头部、双臂和 waist_yaw）为特定点\n"
         << "  4 = 运行到已记录的特定点并保持\n"
         << "  q = 不打开 CAN，直接退出\n"
         << "请输入 1、2、3、4 或 q：" << std::flush;
@@ -463,6 +465,33 @@ std::vector<robot::ti5::PhysicalJointConfig> selectJoints(
     return result;
 }
 
+std::vector<robot::ti5::PhysicalJointConfig> selectWaypointJoints(
+    const robot::ti5::Ti5RobotConfig &robot_config,
+    const std::vector<robot::ti5::PhysicalJointConfig> &body_joints)
+{
+    std::vector<robot::ti5::PhysicalJointConfig> result = body_joints;
+    const auto waist = std::find_if(
+        robot_config.joints.begin(),
+        robot_config.joints.end(),
+        [](const auto &joint)
+        { return joint.name == kWaistYawJointName; });
+    if (waist == robot_config.joints.end() ||
+        waist->bus != kWaistBusName)
+    {
+        throw std::runtime_error(
+            "特定点计划缺少 waist_yaw 或其不在 waist_fold 总线");
+    }
+
+    result.push_back(*waist);
+    if (result.size() != 18)
+    {
+        throw std::runtime_error(
+            "特定点计划必须正好包含头部 3 轴、双臂 14 轴和 waist_yaw，当前为 " +
+            std::to_string(result.size()) + " 轴");
+    }
+    return result;
+}
+
 std::vector<robot::ti5::PhysicalJointConfig> selectArmJoints(
     const std::vector<robot::ti5::PhysicalJointConfig> &joints)
 {
@@ -491,7 +520,7 @@ void printPlan(
     std::cout
         << "TI5 T170C 独立实机测试菜单\n"
         << "动作：电机零点回零 / 双臂两段缓降后 STOP / 记录特定点 / 运行到特定点\n"
-        << "排除：waist_yaw、Fold_P1/P2/P3/R、傲意手\n"
+        << "菜单 1/2 排除：waist_yaw、Fold_P1/P2/P3/R、傲意手；菜单 3/4 纳入 waist_yaw\n"
         << "CAN：" << (options.bring_up ? "自动拉起四路本体 CAN" : "使用已拉起的 CAN")
         << "\n"
         << "普通关节最大自动回零距离：" << kMaximumAutomaticTravelRad
@@ -529,8 +558,9 @@ void printPlan(
     std::cout
         << "\n菜单 1：17 轴回到 CAN 电机角 0 并保持\n"
         << "菜单 2：双臂经两个中间点缓慢下放，托稳确认后在第二中间点 STOP\n"
-        << "菜单 3：只读记录当前 17 轴姿态，保存到 recorded_waypoint.txt\n"
-        << "菜单 4：五次曲线运行到记录点并保持，峰值不超过 0.15 rad/s\n";
+        << "菜单 3：只读记录当前 18 轴姿态（头部、双臂、waist_yaw），保存到 recorded_waypoint.txt\n"
+        << "菜单 4：按头部 -> 双臂 -> waist_yaw 顺序运行到记录点并保持，峰值不超过 "
+        << kMaximumVelocityRadPerSecond << " rad/s\n";
 }
 
 std::vector<std::string> prepareBodyInterfaces(
@@ -1525,6 +1555,29 @@ void runTargetSegment(
     }
 }
 
+std::vector<double> buildWaypointPhaseTargets(
+    const std::vector<JointRuntime> &joints,
+    const std::vector<double> &targets,
+    const std::set<std::string> &active_buses)
+{
+    if (targets.size() != joints.size() || active_buses.empty())
+    {
+        throw std::invalid_argument("无效的特定点分段目标");
+    }
+
+    std::vector<double> phase_targets;
+    phase_targets.reserve(joints.size());
+    for (std::size_t index = 0; index < joints.size(); ++index)
+    {
+        phase_targets.push_back(joints[index].last_commanded);
+        if (active_buses.count(joints[index].config.bus) != 0)
+        {
+            phase_targets.back() = targets[index];
+        }
+    }
+    return phase_targets;
+}
+
 void holdCommandedTargets(
     std::vector<JointRuntime> &joints,
     const int cycles,
@@ -1696,16 +1749,31 @@ int main(int argc, char **argv)
             robot_config.can_buses,
             can_config,
             candidate_interfaces);
-        for (const auto &bus_name : kControlledBuses)
+
+        const bool waypoint_action =
+            action == MenuAction::RecordWaypoint ||
+            action == MenuAction::RunWaypoint;
+        const auto motion_configs = waypoint_action
+                                         ? selectWaypointJoints(
+                                               robot_config,
+                                               selected_joints)
+                                         : selected_joints;
+        std::set<std::string> active_bus_names = kControlledBuses;
+        if (waypoint_action)
+        {
+            active_bus_names.insert(kWaistBusName);
+        }
+
+        for (const auto &bus_name : active_bus_names)
         {
             robot::common::logger()->info(
-                "逻辑总线映射：{} -> {}",
+                "本次动作使用逻辑总线：{} -> {}",
                 bus_name,
                 mapping.at(bus_name));
         }
 
         std::map<std::string, std::unique_ptr<robot::ti5::CanBus>> buses;
-        for (const auto &bus_name : kControlledBuses)
+        for (const auto &bus_name : active_bus_names)
         {
             const auto bus_config = std::find_if(
                 robot_config.can_buses.begin(),
@@ -1822,9 +1890,9 @@ int main(int argc, char **argv)
             return 0;
         }
 
-        const auto statuses = queryDriverStatuses(selected_joints, buses);
+        const auto statuses = queryDriverStatuses(motion_configs, buses);
         auto joints = buildCspRuntimes(
-            selected_joints,
+            motion_configs,
             limits,
             statuses,
             buses,
@@ -1833,7 +1901,9 @@ int main(int argc, char **argv)
 
         if (action == MenuAction::RecordWaypoint)
         {
-            requireYes("只读取当前 17 轴位置并保存特定点，不发送位置控制帧。确认继续？");
+            requireYes(
+                "只读取当前 18 轴位置（头部、双臂和 waist_yaw）并保存特定点，"
+                "不发送位置控制帧。确认继续？");
             saveWaypoint(waypointPath(source_dir), joints);
             robot::common::logger()->info("已记录特定点：{}", waypointPath(source_dir).string());
             for (const auto &joint : joints)
@@ -1892,12 +1962,41 @@ int main(int argc, char **argv)
             {
                 const auto targets = loadWaypoint(waypointPath(source_dir), joints);
                 printCspPreflight(joints, "Run to recorded waypoint");
-                requireYes("Move all 17 joints to the recorded waypoint and hold. Confirm the area is safe.");
+                requireYes(
+                    "程序将按头部 -> 双臂 -> waist_yaw 的顺序，把 18 个关节运行到记录点并保持。\n"
+                    "每一段运行时，尚未轮到的关节保持当前已确认位置；请确认路径、夹点和线缆安全。");
                 // Reuse the mode-1 guarded shoulder recovery when the current
                 // pose is just outside a known driver boundary.
                 captureShouldersAtDriverBoundary(joints);
                 verifyReadiness(joints);
-                runTargetSegment(joints, targets, "recorded waypoint", kMaximumVelocityRadPerSecond);
+                runTargetSegment(
+                    joints,
+                    buildWaypointPhaseTargets(
+                        joints,
+                        targets,
+                        std::set<std::string>{"head"}),
+                    "waypoint：头部",
+                    kMaximumVelocityRadPerSecond);
+                robot::common::logger()->info("头部已完成运动段，开始到位复核");
+                holdTargetsAndVerify(joints);
+                runTargetSegment(
+                    joints,
+                    buildWaypointPhaseTargets(
+                        joints,
+                        targets,
+                        std::set<std::string>{"left_arm", "right_arm"}),
+                    "waypoint：双臂",
+                    kMaximumVelocityRadPerSecond);
+                robot::common::logger()->info("双臂已完成运动段，开始到位复核");
+                holdTargetsAndVerify(joints);
+                runTargetSegment(
+                    joints,
+                    buildWaypointPhaseTargets(
+                        joints,
+                        targets,
+                        std::set<std::string>{kWaistBusName}),
+                    "waypoint：腰部 waist_yaw",
+                    kMaximumVelocityRadPerSecond);
                 for (std::size_t i = 0; i < joints.size(); ++i) joints[i].last_commanded = targets[i];
                 holdTargetsAndVerify(joints);
                 robot::common::logger()->info("PASS: reached recorded waypoint and holding");

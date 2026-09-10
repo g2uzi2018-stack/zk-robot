@@ -96,7 +96,7 @@ export ZK_ROBOT_CONFIRM_UNVERIFIED_HAND_TEST=YES
 
 ```bash
 cd /home/kuang/workspace/zk_robot
-cmake --build build --target ti5_zero_home -j2
+cmake --build build --target ti5_zero_home -j8
 ./build/tools/ti5_zero_home --dry-run
 ```
 

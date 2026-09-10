@@ -1828,7 +1828,8 @@ int main(int argc, char **argv)
             limits,
             statuses,
             buses,
-            action == MenuAction::ZeroHome);
+            action == MenuAction::ZeroHome ||
+                action == MenuAction::RunWaypoint);
 
         if (action == MenuAction::RecordWaypoint)
         {
@@ -1892,6 +1893,9 @@ int main(int argc, char **argv)
                 const auto targets = loadWaypoint(waypointPath(source_dir), joints);
                 printCspPreflight(joints, "Run to recorded waypoint");
                 requireYes("Move all 17 joints to the recorded waypoint and hold. Confirm the area is safe.");
+                // Reuse the mode-1 guarded shoulder recovery when the current
+                // pose is just outside a known driver boundary.
+                captureShouldersAtDriverBoundary(joints);
                 verifyReadiness(joints);
                 runTargetSegment(joints, targets, "recorded waypoint", kMaximumVelocityRadPerSecond);
                 for (std::size_t i = 0; i < joints.size(); ++i) joints[i].last_commanded = targets[i];

@@ -106,8 +106,8 @@ CAN 已经处于 UP 且为 1 Mbps 的场景。
 ### 实机操作
 
 ```bash
-export ZK_ROBOT_CONFIRM_TI5_TEST=YES
-./build/tools/ti5_zero_home
+cd ~/workspace/zk_robot
+sudo env ZK_ROBOT_CONFIRM_TI5_TEST=YES ./build/tools/ti5_zero_home
 ```
 
 执行菜单 `2` 时，双臂会在第二中间点保持，必须先可靠托住双臂，再确认最终 STOP。

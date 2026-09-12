@@ -54,6 +54,10 @@ public:
     // 释放转矩或操作抱闸，也不自动等待或验证 mode=0。
     void requestStopMode();
 
+    // 发送 0x0B 清除驱动器故障。调用方必须先确认故障原因和恢复条件；
+    // 本接口不会自动清故障，也不会把清故障当作重新使能。
+    void clearFault();
+
     std::uint16_t nodeId() const noexcept;
 
 private:

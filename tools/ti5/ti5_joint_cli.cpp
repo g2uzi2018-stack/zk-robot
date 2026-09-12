@@ -155,7 +155,7 @@ void prepareHeadForControl(Head &head)
     {
         if (std::string(error.what()).find("mixed mode") == std::string::npos)
             throw;
-        head.requestStopModeAndConfirm();
+        head.stop();
         head.prepare();
     }
 }
@@ -170,7 +170,7 @@ void prepareArmForControl(Arm &arm)
     {
         if (std::string(error.what()).find("mixed mode") == std::string::npos)
             throw;
-        arm.requestStopModeAndConfirm();
+        arm.stop();
         arm.prepare();
     }
 }
@@ -735,7 +735,7 @@ int main(int argc, char **argv)
         {
             try
             {
-                component.requestStopModeAndConfirm();
+                component.stop();
             }
             catch (const std::exception &error)
             {

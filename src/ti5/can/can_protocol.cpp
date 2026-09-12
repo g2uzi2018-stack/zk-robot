@@ -21,6 +21,7 @@ namespace
     constexpr std::uint8_t kFaultQueryCommand = 0x0A;
     constexpr std::uint8_t kMaximumPositionQueryCommand = 0x1A;
     constexpr std::uint8_t kMinimumPositionQueryCommand = 0x1B;
+    constexpr std::uint8_t kClearFaultCommand = 0x0B;
     constexpr std::uint8_t kCspQueryCommand = 0x41;
     constexpr std::uint8_t kPositionCspCommand = 0x44;
 
@@ -165,6 +166,17 @@ namespace robot::ti5
         frame.id = node_id;
         frame.data_length = 1;
         frame.data[0] = kStopModeCommand;
+        return frame;
+    }
+
+    robot::can::CanFrame encodeClearFaultRequest(const std::uint16_t node_id)
+    {
+        validateNodeId(node_id);
+
+        robot::can::CanFrame frame{};
+        frame.id = node_id;
+        frame.data_length = 1;
+        frame.data[0] = kClearFaultCommand;
         return frame;
     }
 

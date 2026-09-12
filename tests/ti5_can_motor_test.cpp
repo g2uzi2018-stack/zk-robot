@@ -183,6 +183,15 @@ int main()
                    stop_request.data[0] == 0x02,
                "CanMotor STOP-mode request encoding mismatch");
 
+        motor.clearFault();
+        expect(transport_pointer->sent_frames.size() == 3,
+               "clear-fault request must send one frame");
+        const auto &clear_fault = transport_pointer->sent_frames.back();
+        expect(clear_fault.id == 23 &&
+                   clear_fault.data_length == 1 &&
+                   clear_fault.data[0] == 0x0B,
+               "CanMotor clear-fault request encoding mismatch");
+
         transport_pointer->enqueue(cspFrame(23, 1500, 101, 100));
         bus.collectPendingFeedback();
         const auto first_state = motor.latestState();

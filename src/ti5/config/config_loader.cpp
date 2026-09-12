@@ -559,6 +559,110 @@ namespace robot::ti5
                              "声明值 " + std::to_string(result.body_motor_count) +
                                  " 与所有逻辑 bus 的 node ID 总数 " + std::to_string(total_node_count) + " 不一致");
         }
+
+        // shared_axes 是业务语义别名，不生成第二个 physical joint 或 Motor。
+        // 目前配置中 ID 2 的 fold_p3 也可被业务层称为 waist_pitch；这里
+        // 只负责把别名声明解析并校验，具体所有权仍由 Waist 等组件持有。
+        const auto shared_axes = root["shared_axes"];
+        if (shared_axes)
+        {
+            if (shared_axes.IsNull() || !shared_axes.IsSequence())
+            {
+                throwConfigError(context + ".shared_axes",
+                                 "类型错误，期望 YAML sequence");
+            }
+
+            std::unordered_set<std::string> shared_physical_joints;
+            std::unordered_set<std::string> aliases;
+            for (std::size_t axis_index = 0;
+                 axis_index < shared_axes.size();
+                 ++axis_index)
+            {
+                const auto axis_context = context + ".shared_axes[" +
+                                           std::to_string(axis_index) + "]";
+                if (!shared_axes[axis_index].IsMap())
+                {
+                    throwConfigError(axis_context,
+                                     "类型错误，期望 YAML mapping");
+                }
+                const auto &axis_node = shared_axes[axis_index];
+                SharedAxisConfig axis;
+                axis.physical_joint = requireString(
+                    axis_node, "physical_joint", axis_context);
+                if (joint_names.find(axis.physical_joint) == joint_names.end())
+                {
+                    throwConfigError(
+                        axis_context + ".physical_joint",
+                        "引用了未知 physical joint: " + axis.physical_joint);
+                }
+                if (!shared_physical_joints.insert(axis.physical_joint).second)
+                {
+                    throwConfigError(
+                        axis_context + ".physical_joint",
+                        "同一个 physical joint 不能声明多个 shared_axes 分组: " +
+                            axis.physical_joint);
+                }
+
+                const auto alias_nodes = requireSequence(
+                    axis_node, "semantic_aliases", axis_context);
+                if (alias_nodes.size() == 0)
+                {
+                    throwConfigError(
+                        axis_context + ".semantic_aliases",
+                        "不能为空");
+                }
+                for (std::size_t alias_index = 0;
+                     alias_index < alias_nodes.size();
+                     ++alias_index)
+                {
+                    const auto alias_context =
+                        axis_context + ".semantic_aliases[" +
+                        std::to_string(alias_index) + "]";
+                    if (!alias_nodes[alias_index].IsScalar())
+                    {
+                        throwConfigError(alias_context,
+                                         "类型错误，期望 YAML scalar");
+                    }
+                    const auto &alias_node = alias_nodes[alias_index];
+                    if (hasExplicitNonStringTag(alias_node) ||
+                        isImplicitTypedScalar(alias_node))
+                    {
+                        throwConfigError(alias_context,
+                                         "类型错误，期望字符串");
+                    }
+                    std::string alias;
+                    try
+                    {
+                        alias = alias_node.as<std::string>();
+                    }
+                    catch (const YAML::Exception &error)
+                    {
+                        throwConfigError(
+                            alias_context,
+                            "类型错误，期望字符串: " +
+                                std::string(error.what()));
+                    }
+                    if (alias.empty())
+                    {
+                        throwConfigError(alias_context, "不能为空");
+                    }
+                    if (joint_names.find(alias) != joint_names.end())
+                    {
+                        throwConfigError(
+                            alias_context,
+                            "不能与 physical joint 名称重复: " + alias);
+                    }
+                    if (!aliases.insert(alias).second)
+                    {
+                        throwConfigError(
+                            alias_context,
+                            "semantic alias 重复: " + alias);
+                    }
+                    axis.semantic_aliases.push_back(alias);
+                }
+                result.shared_axes.push_back(std::move(axis));
+            }
+        }
         return result;
     }
 

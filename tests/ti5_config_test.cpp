@@ -42,6 +42,12 @@ int main()
                "T170C robot topology config mismatch");
         expect(robot.can_buses.size() == 4,
                "T170C must contain four body logical buses");
+        expect(robot.shared_axes.size() == 1 &&
+                   robot.shared_axes.front().physical_joint == "fold_p3" &&
+                   robot.shared_axes.front().semantic_aliases.size() == 2 &&
+                   robot.shared_axes.front().semantic_aliases[0] == "waist_pitch" &&
+                   robot.shared_axes.front().semantic_aliases[1] == "fold_chain_p3",
+               "T170C shared-axis aliases were not fully loaded");
         expect(can.socketcan.bitrate == 1000000 &&
                    can.socketcan.interface_regex == "^can[0-9]+$",
                "SocketCAN interface config mismatch");

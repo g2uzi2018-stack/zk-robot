@@ -361,6 +361,12 @@ int main()
         expect(state.all_positions_available &&
                    state.all_csp_feedback_fresh,
                "Arm did not aggregate fresh seven-joint feedback");
+        const auto positions = arm.readPositions();
+        for (const auto &position : positions)
+        {
+            expect(position && std::abs(*position) < 1e-12,
+                   "Arm readPositions did not expose cached positions");
+        }
         for (const auto &joint_state : state.joints)
         {
             expect(joint_state.position_rad &&
@@ -423,8 +429,14 @@ int main()
                 stop_start + index];
             expect(frame.data_length == 1 && frame.data[0] == 0x02 &&
                        frame.id == static_cast<std::uint16_t>(22 - index),
-                   "Arm STOP order was not wrist-to-shoulder");
+                       "Arm STOP order was not wrist-to-shoulder");
         }
+        const auto clear_faults_before =
+            countCommand(transport_pointer->sent_frames, 0x0B);
+        arm.clearFault();
+        expect(countCommand(transport_pointer->sent_frames, 0x0B) ==
+                   clear_faults_before + 7,
+               "Arm clearFault did not send one request per joint");
         arm.prepare();
         expect(!arm.hasSentPositionCommand(),
                "a new prepare cycle did not clear old 0x44 evidence");
@@ -444,6 +456,21 @@ int main()
             },
             "Arm accepted an incomplete semantic joint set");
 
+        auto wrong_mapping = rightArmConfigs();
+        wrong_mapping[0].physical_joint.motor.node_id = 99;
+        expectThrow<std::invalid_argument>(
+            [&wrong_mapping]()
+            {
+                auto wrong_transport = std::make_unique<FakeTransport>();
+                auto wrong_bus = std::make_unique<robot::ti5::CanBus>(
+                    std::move(wrong_transport));
+                robot::ti5::Arm invalid_arm(
+                    robot::ti5::ArmSide::Right,
+                    std::move(wrong_bus),
+                    wrong_mapping);
+            },
+            "Arm accepted an invalid semantic joint/node mapping");
+
         // 左臂使用另一组语义名称和节点号；显式 STOP 也必须能在尚未
         // prepare 时使用，避免准备失败后反而失去停止通道。
         auto left_transport = std::make_unique<FakeTransport>();
@@ -460,7 +487,7 @@ int main()
                    left_arm.joint(0).nodeId() == 23 &&
                    left_arm.joint(6).nodeId() == 29,
                "left Arm semantic assembly mismatch");
-        left_arm.requestStopModeAndConfirm();
+        left_arm.stop();
         expect(left_arm.controlState() ==
                    robot::ti5::ArmControlState::Stopped,
                "unprepared Arm explicit STOP did not confirm mode 0");

@@ -177,6 +177,11 @@ void Joint::commandPositionCsp(const double joint_position_rad)
     motor_.commandPositionCsp(jointToMotorPosition(joint_position_rad));
 }
 
+void Joint::clearFault()
+{
+    motor_.clearFault();
+}
+
 void Joint::requestStopMode()
 {
     motor_.requestStopMode();

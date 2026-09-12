@@ -57,7 +57,8 @@ struct WaistState
 
 // Five physical waist/fold joints, owned by this component only.
 // Position commands use 0x44 and must establish/verify wire mode 8.
-// No STOP, brake, current, velocity or mutable Joint interface is exposed.
+// No STOP/brake or mutable Joint interface is exposed. clearFault is an
+// explicit 0x0B recovery operation; it never claims to release or hold load.
 // ID 2 is a single Joint: waist_pitch is the fold_p3 semantic alias.
 // Single-threaded; callers must provide exclusive control of this CAN group.
 // Destruction sends no frames. Hardware power-loss holding is not certified here.
@@ -65,7 +66,10 @@ class Waist final
 {
 public:
     static constexpr std::size_t kJointCount = 5;
+    // Waist 组件中的腰部俯仰语义对应实体 node 2 / fold_p3。
+    static constexpr std::size_t kWaistPitchIndex = 1;
     using JointValues = std::array<double, kJointCount>;
+    using JointPositions = std::array<std::optional<double>, kJointCount>;
     using JointNames = std::array<std::string, kJointCount>;
 
     Waist(std::unique_ptr<CanBus> bus,
@@ -80,6 +84,8 @@ public:
 
     void prepare();
     WaistState readState();
+    JointPositions readPositions();
+    void clearFault();
     void validatePositions(const JointValues &positions) const;
     void startPositionControlAtCurrentPosition();
     void commandPositionsCsp(const JointValues &positions);

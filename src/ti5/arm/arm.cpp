@@ -128,6 +128,13 @@ Arm::Arm(const ArmSide side,
             throw std::invalid_argument(
                 "TI5 Arm contains duplicate CAN node ID");
         }
+        const auto expected_node_id = static_cast<std::uint16_t>(
+            (side_ == ArmSide::Left ? 23 : 16) + index);
+        if (found->second->physical_joint.motor.node_id != expected_node_id)
+        {
+            throw std::invalid_argument(
+                "TI5 Arm semantic joint/node mapping mismatch");
+        }
 
         configs_[index] = *found->second;
         joints_[index] = std::make_unique<Joint>(
@@ -367,6 +374,47 @@ ArmState Arm::readState()
     return result;
 }
 
+Arm::JointPositions Arm::readPositions()
+{
+    const auto state = readState();
+    JointPositions positions{};
+    for (std::size_t index = 0; index < kJointCount; ++index)
+    {
+        positions[index] = state.joints[index].position_rad;
+    }
+    return positions;
+}
+
+void Arm::clearFault()
+{
+    if (control_state_ == ArmControlState::StartingPositionControl ||
+        control_state_ == ArmControlState::PositionControlActive ||
+        control_state_ == ArmControlState::RequestingStop)
+    {
+        throw std::logic_error(
+            "TI5 Arm cannot clear faults during active control");
+    }
+
+    try
+    {
+        requireHealthyBus("clearing faults");
+        for (std::size_t index = 0; index < kJointCount; ++index)
+        {
+            joints_[index]->clearFault();
+            if (index + 1 < kJointCount &&
+                options_.inter_frame_gap.count() > 0)
+            {
+                std::this_thread::sleep_for(options_.inter_frame_gap);
+            }
+        }
+    }
+    catch (...)
+    {
+        control_state_ = ArmControlState::Failed;
+        throw;
+    }
+}
+
 void Arm::validatePositions(const JointValues &positions) const
 {
     for (std::size_t index = 0; index < kJointCount; ++index)
@@ -398,27 +446,27 @@ void Arm::startPositionControlAtCurrentPosition()
             "TI5 Arm position control can only start after prepare");
     }
 
-    const auto statuses = queryDriverStatuses();
-    requireUniformStartableModes(statuses);
-    requireHealthyBus("starting position control");
-
-    const JointValues hold_positions = queryCurrentPositions();
-    // 先检查完 7 轴，保证任何一个目标不合法时一帧都不发送。
-    validatePositions(hold_positions);
-
-    const auto baseline = readState();
-    std::array<std::uint64_t, kJointCount> previous_sequences{};
-    std::array<std::size_t, kJointCount> stale_cycles{};
-    std::array<std::size_t, kJointCount> fresh_cycles{};
-    for (std::size_t index = 0; index < kJointCount; ++index)
-    {
-        previous_sequences[index] =
-            baseline.joints[index].csp_update_sequence;
-    }
-
-    control_state_ = ArmControlState::StartingPositionControl;
     try
     {
+        const auto statuses = queryDriverStatuses();
+        requireUniformStartableModes(statuses);
+        requireHealthyBus("starting position control");
+
+        const JointValues hold_positions = queryCurrentPositions();
+        // 先检查完 7 轴，保证任何一个目标不合法时一帧都不发送。
+        validatePositions(hold_positions);
+
+        const auto baseline = readState();
+        std::array<std::uint64_t, kJointCount> previous_sequences{};
+        std::array<std::size_t, kJointCount> stale_cycles{};
+        std::array<std::size_t, kJointCount> fresh_cycles{};
+        for (std::size_t index = 0; index < kJointCount; ++index)
+        {
+            previous_sequences[index] =
+                baseline.joints[index].csp_update_sequence;
+        }
+
+        control_state_ = ArmControlState::StartingPositionControl;
         auto next_cycle = std::chrono::steady_clock::now();
         for (std::size_t cycle = 0;
              cycle < options_.position_control_start_cycles;
@@ -529,9 +577,9 @@ void Arm::commandPositionsCsp(const JointValues &positions)
 
     // 完整预检先于任何发送。
     validatePositions(positions);
-    const auto snapshot = readState();
     try
     {
+        const auto snapshot = readState();
         requireHealthyBus("position command");
         if (!snapshot.all_positions_available ||
             !snapshot.all_csp_feedback_fresh)
@@ -609,6 +657,11 @@ void Arm::requestStopModeAndConfirm()
         control_state_ = ArmControlState::Failed;
         throw;
     }
+}
+
+void Arm::stop()
+{
+    requestStopModeAndConfirm();
 }
 
 } // namespace robot::ti5

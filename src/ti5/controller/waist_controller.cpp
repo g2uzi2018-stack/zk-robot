@@ -39,6 +39,16 @@ Waist::JointValues WaistController::requireControllablePositions(
 
 void WaistController::start()
 {
+    startWithMode(ControlMode::FullWaistFold);
+}
+
+void WaistController::startWaistPitchControl()
+{
+    startWithMode(ControlMode::WaistPitchOnly);
+}
+
+void WaistController::startWithMode(const ControlMode mode)
+{
     if (state_ != ControlState::Idle)
     {
         throw std::logic_error(
@@ -57,6 +67,7 @@ void WaistController::start()
         waist_.validatePositions(positions);
         current_state_ = snapshot;
         target_positions_ = positions;
+        control_mode_ = mode;
         state_ = ControlState::Running;
     }
     catch (...)
@@ -74,8 +85,32 @@ void WaistController::setTarget(
         throw std::logic_error(
             "TI5 WaistController target requires Running state");
     }
+    if (control_mode_ == ControlMode::WaistPitchOnly)
+    {
+        throw std::logic_error(
+            "TI5 WaistController is in waist-pitch-only mode; use setWaistPitchTarget");
+    }
     waist_.validatePositions(target_positions);
     target_positions_ = target_positions;
+}
+
+void WaistController::setWaistPitchTarget(const double pitch_rad)
+{
+    if (state_ != ControlState::Running)
+    {
+        throw std::logic_error(
+            "TI5 WaistController waist-pitch target requires Running state");
+    }
+    if (control_mode_ != ControlMode::WaistPitchOnly)
+    {
+        throw std::logic_error(
+            "TI5 WaistController is not in waist-pitch-only mode");
+    }
+
+    auto next_target = target_positions_;
+    next_target[Waist::kWaistPitchIndex] = pitch_rad;
+    waist_.validatePositions(next_target);
+    target_positions_ = next_target;
 }
 
 void WaistController::holdCurrentPosition()
@@ -109,6 +144,7 @@ void WaistController::reset()
             "TI5 WaistController can only reset from Failed state");
     }
     current_state_.reset();
+    control_mode_ = ControlMode::FullWaistFold;
     state_ = ControlState::Idle;
 }
 
@@ -149,6 +185,11 @@ const std::optional<WaistState> &WaistController::currentState() const noexcept
 const Waist::JointValues &WaistController::targetPositions() const noexcept
 {
     return target_positions_;
+}
+
+WaistController::ControlMode WaistController::controlMode() const noexcept
+{
+    return control_mode_;
 }
 
 bool WaistController::targetReached(

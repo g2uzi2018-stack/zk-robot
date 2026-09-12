@@ -281,6 +281,10 @@ int main()
         expect(state.all_positions_available &&
                    state.all_csp_feedback_fresh,
                "Head did not aggregate three-axis feedback");
+        const auto positions = head.readPositions();
+        expect(positions[0].has_value() && positions[1].has_value() &&
+                   positions[2].has_value(),
+               "Head readPositions did not expose all axes");
 
         robot::ti5::Head::JointValues invalid{};
         invalid[1] = 0.55;
@@ -317,6 +321,29 @@ int main()
                        frame.id == static_cast<std::uint16_t>(32 - index),
                    "Head STOP order mismatch");
         }
+
+        const auto clear_fault_before = countCommand(
+            transport_pointer->sent, 0x0B);
+        head.clearFault();
+        expect(countCommand(transport_pointer->sent, 0x0B) ==
+                   clear_fault_before + 3,
+               "Head clearFault did not send one request per joint");
+        head.stop();
+        expect(head.controlState() == robot::ti5::HeadControlState::Stopped,
+               "Head stop alias did not preserve confirmed STOP semantics");
+
+        auto wrong_mapping = headConfigs();
+        wrong_mapping[0].physical_joint.motor.node_id = 99;
+        expectThrow<std::invalid_argument>(
+            [&wrong_mapping]()
+            {
+                auto fake = std::make_unique<FakeTransport>();
+                auto invalid_bus = std::make_unique<robot::ti5::CanBus>(
+                    std::move(fake));
+                robot::ti5::Head invalid_head(
+                    std::move(invalid_bus), wrong_mapping);
+            },
+            "Head accepted an invalid semantic joint/node mapping");
 
         auto missing = headConfigs();
         missing.pop_back();

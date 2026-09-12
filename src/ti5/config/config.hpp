@@ -68,6 +68,14 @@ struct PhysicalJointConfig
     CanMotorConfig motor;
 };
 
+// 一个实体关节可以在不同业务模型中有多个语义名称，但这些名称最终
+// 必须解析到同一个 physical_joint；它们不能各自创建第二个 Motor。
+struct SharedAxisConfig
+{
+    std::string physical_joint;
+    std::vector<std::string> semantic_aliases;
+};
+
 struct Ti5RobotConfig
 {
     std::string vendor;
@@ -76,6 +84,7 @@ struct Ti5RobotConfig
     std::vector<LogicalCanBus> can_buses;
     EncoderConfig encoder_defaults;
     std::vector<PhysicalJointConfig> joints;
+    std::vector<SharedAxisConfig> shared_axes;
 };
 
 // 主机软件允许的电机输出角范围。范围来自 safety.yaml，单位为 rad。

@@ -173,6 +173,11 @@ void CanMotor::requestStopMode()
     bus_.send(encodeStopModeRequest(node_id_));
 }
 
+void CanMotor::clearFault()
+{
+    bus_.send(encodeClearFaultRequest(node_id_));
+}
+
 std::uint16_t CanMotor::nodeId() const noexcept
 {
     return node_id_;

@@ -58,6 +58,9 @@ public:
     void validatePositionCommand(double joint_position_rad) const;
     void commandPositionCsp(double joint_position_rad);
 
+    // 显式发送 0x0B 清除该电机故障；不会自动重新建立位置控制。
+    void clearFault();
+
     // TI5 没有已确认的独立 enable 帧。正常位置控制由上层在完成状态、
     // 限位和反馈检查后，以当前安全位置的 0x44 建立并验证。
     // 这里仅提供已确认的 0x02 STOP 请求，不把它误称为 disable。

@@ -268,6 +268,12 @@ int main()
                "Waist did not assemble joints by semantic name");
 
         waist.prepare();
+        const auto clear_fault_before = countCommand(
+            transport_pointer->sent, 0x0B);
+        waist.clearFault();
+        expect(countCommand(transport_pointer->sent, 0x0B) ==
+                   clear_fault_before + 5,
+               "Waist clearFault did not send one request per joint");
         waist.startPositionControlAtCurrentPosition();
         expect(waist.controlState() ==
                    robot::ti5::WaistControlState::PositionControlActive,
@@ -287,6 +293,11 @@ int main()
         expect(state.all_positions_available &&
                    state.all_csp_feedback_fresh,
                "Waist did not aggregate five-axis feedback");
+        const auto positions = waist.readPositions();
+        expect(positions[0].has_value() && positions[1].has_value() &&
+                   positions[2].has_value() && positions[3].has_value() &&
+                   positions[4].has_value(),
+               "Waist readPositions did not expose all axes");
 
         robot::ti5::Waist::JointValues invalid{};
         invalid[1] = 0.55;
@@ -371,6 +382,7 @@ int main()
                 expect((frame.data_length == 5 && frame.data[0] == 0x44) ||
                        (frame.data_length == 1 && (frame.data[0] == 0x03 ||
                         frame.data[0] == 0x0A || frame.data[0] == 0x08 ||
+                        frame.data[0] == 0x0B ||
                         frame.data[0] == 0x1A || frame.data[0] == 0x1B)),
                        "Waist emitted a command outside the read/position allowlist");
             }

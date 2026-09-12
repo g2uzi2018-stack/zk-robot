@@ -58,16 +58,18 @@ struct HeadState
     bool all_csp_feedback_fresh{false};
 };
 
-// TI5 三自由度头部，固定顺序为 neck_yaw、neck_pitch、neck_roll。
+// TI5/T170C 三自由度头部，固定顺序为 neck_yaw、neck_pitch、neck_roll，
+// 对应 node 30、31、32。
 //
 // 与 TIAGo Head 的职责一致：管理一条头部总线和一组 Joint，提供部件级
 // 状态与完整批次命令。协议能力仍遵循 TI5：不提供虚构的 enable、
-// disable、clearFault 或速度参数接口。
+// disable 或速度参数接口；clearFault 只发送已确认的 0x0B。
 class Head final
 {
 public:
     static constexpr std::size_t kJointCount = 3;
     using JointValues = std::array<double, kJointCount>;
+    using JointPositions = std::array<std::optional<double>, kJointCount>;
     using JointNames = std::array<std::string, kJointCount>;
 
     Head(std::unique_ptr<CanBus> bus,
@@ -83,9 +85,13 @@ public:
 
     void prepare();
     HeadState readState();
+    JointPositions readPositions();
+    void clearFault();
     void validatePositions(const JointValues &positions) const;
     void startPositionControlAtCurrentPosition();
     void commandPositionsCsp(const JointValues &positions);
+    // Head 级别的简短停止入口，语义等同于 requestStopModeAndConfirm()。
+    void stop();
     void requestStopModeAndConfirm();
 
 private:

@@ -69,7 +69,8 @@ struct ArmState
     bool all_csp_feedback_fresh{false};
 };
 
-// 一条 TI5 七自由度机械臂。
+// 一条 TI5/T170C 七自由度机械臂；左侧固定使用 node 23..29，右侧
+// 固定使用 node 16..22，构造时会同时校验语义名称、逻辑 bus 和节点映射。
 //
 // Arm 负责：
 //   - 按语义名称固定组装左臂或右臂的 7 个 Joint；
@@ -89,6 +90,7 @@ public:
     static constexpr std::size_t kJointCount = 7;
 
     using JointValues = std::array<double, kJointCount>;
+    using JointPositions = std::array<std::optional<double>, kJointCount>;
     using JointNames = std::array<std::string, kJointCount>;
 
     // available_joint_configs 可以包含整机全部 JointConfig；Arm 按 name
@@ -114,6 +116,15 @@ public:
 
     ArmState readState();
 
+    // 读取当前缓存的七轴关节位置。与 readState() 相同，不会发送运动命令；
+    // 某一轴尚未收到反馈时，该轴返回 std::nullopt。
+    JointPositions readPositions();
+
+    // 显式向七个驱动器发送 0x0B 清故障。该操作不会自动重新建立
+    // Position CSP，调用方仍需随后 prepare()/startPositionControl...。
+    // 不能在位置控制正在建立或运行时调用。
+    void clearFault();
+
     // 先验证完整 7 轴目标；任意一轴非法时，本批次不发送任何帧。
     void validatePositions(const JointValues &positions) const;
 
@@ -123,6 +134,10 @@ public:
 
     // 只接受后续控制周期已经规划好的位置点，不在 Arm 内生成轨迹。
     void commandPositionsCsp(const JointValues &positions);
+
+    // Arm 级别的简短停止入口，语义等同于 requestStopModeAndConfirm()。
+    // 仍然只确认 mode=0，不代表去使能、释放转矩或抱闸。
+    void stop();
 
     // 从腕部到肩部发送 0x02，并查询确认所有关节 mode=0、fault=0。
     // 这是显式恢复接口，所以 prepare 失败后仍允许调用。

@@ -64,6 +64,10 @@ namespace robot::ti5
     // 不表示伺服去使能、转矩释放或抱闸动作；调用方必须随后查询运行模式。
     robot::can::CanFrame encodeStopModeRequest(std::uint16_t node_id);
 
+    // 编码 0x0B 清故障请求帧。该命令只应在上层确认故障原因和恢复条件后
+    // 显式调用，不能在控制循环中自动重发。
+    robot::can::CanFrame encodeClearFaultRequest(std::uint16_t node_id);
+
     // 编码 0x08 读取当前位置请求帧。
     robot::can::CanFrame encodePositionQuery(std::uint16_t node_id);
 

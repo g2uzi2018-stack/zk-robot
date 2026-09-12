@@ -304,6 +304,46 @@ WaistState Waist::readState()
     return result;
 }
 
+Waist::JointPositions Waist::readPositions()
+{
+    const auto state = readState();
+    JointPositions positions{};
+    for (std::size_t index = 0; index < kJointCount; ++index)
+    {
+        positions[index] = state.joints[index].position_rad;
+    }
+    return positions;
+}
+
+void Waist::clearFault()
+{
+    if (control_state_ == WaistControlState::StartingPositionControl ||
+        control_state_ == WaistControlState::PositionControlActive)
+    {
+        throw std::logic_error(
+            "TI5 Waist cannot clear faults during active control");
+    }
+
+    try
+    {
+        requireHealthyBus("clearing faults");
+        for (std::size_t index = 0; index < kJointCount; ++index)
+        {
+            joints_[index]->clearFault();
+            if (index + 1 < kJointCount &&
+                options_.inter_frame_gap.count() > 0)
+            {
+                std::this_thread::sleep_for(options_.inter_frame_gap);
+            }
+        }
+    }
+    catch (...)
+    {
+        control_state_ = WaistControlState::Failed;
+        throw;
+    }
+}
+
 void Waist::validatePositions(const JointValues &positions) const
 {
     for (std::size_t index = 0; index < kJointCount; ++index)

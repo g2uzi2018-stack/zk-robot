@@ -65,6 +65,8 @@ constexpr auto kDriverBoundaryCaptureSpeedWindow = 50ms;
 constexpr double kMaximumDriverBoundaryCaptureSpeedRadPerSecond = 0.30;
 constexpr double kMinimumMoveSeconds = 2.0;
 constexpr int kIntermediateHoldCycles = 50;
+constexpr int kProfileModeRecoveryAttempts = 3;
+constexpr auto kProfileModeRecoverySettle = 20ms;
 
 const std::set<std::string> kControlledBuses{
     "head",
@@ -145,6 +147,8 @@ struct JointRuntime
     double last_commanded{0.0};
     std::optional<double> driver_boundary_capture_target;
     FeedbackTracker feedback;
+    bool requires_profile_mode_recovery{false};
+    bool csp_control_established{false};
 };
 
 struct LoweringPlan
@@ -754,7 +758,8 @@ std::vector<JointRuntime> buildCspRuntimes(
     const std::map<std::string, SafetyLimit> &limits,
     const std::map<std::string, DriverStatus> &statuses,
     std::map<std::string, std::unique_ptr<robot::ti5::CanBus>> &buses,
-    const bool require_zero_reachable)
+    const bool require_zero_reachable,
+    const bool allow_profile_mode_recovery)
 {
     std::vector<JointRuntime> joints;
     joints.reserve(selected_joints.size());
@@ -770,12 +775,17 @@ std::vector<JointRuntime> buildCspRuntimes(
         {
             throw std::runtime_error("缺少驱动器状态：" + config.name);
         }
-        if (status->second.mode != 0 && status->second.mode != 8)
+        const bool requires_profile_mode_recovery =
+            allow_profile_mode_recovery &&
+            status->second.mode != 0 &&
+            status->second.mode != 8;
+        if (requires_profile_mode_recovery)
         {
-            throw std::runtime_error(
-                config.name + " 当前 mode=" +
-                std::to_string(status->second.mode) +
-                "，只允许从 mode=0 或 mode=8 建立 CSP");
+            robot::common::logger()->warn(
+                "{} 当前 mode={}；确认后将以当前位置发送 0x1E，"
+                "并复核是否切换到 mode=8",
+                config.name,
+                status->second.mode);
         }
         if (status->second.fault != 0)
         {
@@ -966,6 +976,9 @@ std::vector<JointRuntime> buildCspRuntimes(
         runtime.driver_limits = *driver_limits;
         runtime.start_position = *position;
         runtime.last_commanded = *position;
+        runtime.requires_profile_mode_recovery =
+            requires_profile_mode_recovery;
+        runtime.csp_control_established = false;
         if (known_shoulder_recovery && shoulder_capture_target &&
             shoulder_capture_distance > 1e-6)
         {
@@ -1090,11 +1103,92 @@ void printCspPreflight(
     }
 }
 
-void sendTargets(std::vector<JointRuntime> &joints)
+void recoverProfilePositionModes(std::vector<JointRuntime> &joints)
 {
     for (auto &joint : joints)
     {
+        if (!joint.requires_profile_mode_recovery)
+        {
+            continue;
+        }
+
+        if (!std::isfinite(joint.start_position) ||
+            joint.start_position < joint.driver_limits.minimum_rad ||
+            joint.start_position > joint.driver_limits.maximum_rad)
+        {
+            throw std::runtime_error(
+                joint.config.name +
+                " 当前点不在驱动器 0x1A/0x1B 目标范围内，拒绝强制切换 mode=8");
+        }
+
+        robot::common::logger()->warn(
+            "{} 将使用当前目标 {:.6f} rad 发送 0x1E，尝试从 mode={} 切换到 mode=8",
+            joint.config.name,
+            joint.start_position,
+            joint.status.mode);
+
+        DriverStatus final_status = joint.status;
+        bool recovered = false;
+        for (int attempt = 1;
+             attempt <= kProfileModeRecoveryAttempts;
+             ++attempt)
+        {
+            joint.motor->commandProfilePosition(joint.start_position);
+            std::this_thread::sleep_for(kProfileModeRecoverySettle);
+
+            final_status = queryDriverStatus(joint);
+            joint.status = final_status;
+            if (final_status.fault != 0)
+            {
+                std::ostringstream message;
+                message << joint.config.name
+                        << " 强制切换 mode=8 后 fault=0x"
+                        << std::hex << std::uppercase
+                        << static_cast<std::uint32_t>(final_status.fault);
+                throw std::runtime_error(message.str());
+            }
+            if (final_status.mode == 8)
+            {
+                recovered = true;
+                break;
+            }
+
+            robot::common::logger()->warn(
+                "{} 第 {}/{} 次 mode=8 切换后仍为 mode={}，将重试",
+                joint.config.name,
+                attempt,
+                kProfileModeRecoveryAttempts,
+                final_status.mode);
+        }
+
+        if (!recovered)
+        {
+            throw std::runtime_error(
+                joint.config.name + " 无法从 mode=" +
+                std::to_string(final_status.mode) +
+                " 强制切换到 mode=8；未发送 0x44 运动目标");
+        }
+
+        joint.requires_profile_mode_recovery = false;
+        joint.csp_control_established = false;
+        robot::common::logger()->info(
+            "{} 已通过当前位置 0x1E 切换并确认 mode=8、fault=0",
+            joint.config.name);
+    }
+}
+
+void sendTargets(
+    std::vector<JointRuntime> &joints,
+    const bool established_only = false)
+{
+    for (auto &joint : joints)
+    {
+        if (established_only && !joint.csp_control_established)
+        {
+            continue;
+        }
         joint.motor->commandPositionCsp(joint.last_commanded);
+        joint.csp_control_established = true;
         std::this_thread::sleep_for(kInterFrameGap);
     }
 }
@@ -1217,6 +1311,7 @@ void captureShouldersAtDriverBoundary(
             }
             next_cycle += kControlPeriod;
             joint.motor->commandPositionCsp(capture_target);
+            joint.csp_control_established = true;
             std::this_thread::sleep_until(next_cycle);
             const auto previous_sequence =
                 joint.feedback.last_sequence;
@@ -1326,7 +1421,7 @@ void holdLastCommandsBestEffort(
     std::vector<JointRuntime> &joints)
 {
     robot::common::logger()->warn(
-        "异常后为避免突然释放，继续发送各关节最后已下达目标 {:.2f} 秒；不发送 STOP，程序退出后仍不得假定电机已释放",
+        "异常后为避免突然释放，仅对已经建立 CSP 的关节继续发送最后目标 {:.2f} 秒；不发送 STOP，程序退出后仍不得假定电机已释放",
         20.0 * std::chrono::duration<double>(kControlPeriod).count());
     try
     {
@@ -1334,7 +1429,7 @@ void holdLastCommandsBestEffort(
         for (int cycle = 0; cycle < 20; ++cycle)
         {
             next_cycle += kControlPeriod;
-            sendTargets(joints);
+            sendTargets(joints, true);
             std::this_thread::sleep_until(next_cycle);
         }
     }
@@ -1844,7 +1939,8 @@ int main(int argc, char **argv)
                 limits,
                 arm_statuses,
                 buses,
-                false);
+                false,
+                true);
             const auto lowering_plan = buildLoweringPlan(arm_joints);
             printLoweringPlan(arm_joints, lowering_plan);
             requireYes(
@@ -1897,7 +1993,8 @@ int main(int argc, char **argv)
             statuses,
             buses,
             action == MenuAction::ZeroHome ||
-                action == MenuAction::RunWaypoint);
+                action == MenuAction::RunWaypoint,
+            action != MenuAction::RecordWaypoint);
 
         if (action == MenuAction::RecordWaypoint)
         {
@@ -1944,6 +2041,7 @@ int main(int argc, char **argv)
                     "肩横滚受控恢复行程可能明显大于其他轴；这不是碰撞规划器。\n"
                     "请确认当前姿态到零点的路径、夹点和线缆均安全，物理急停可立即触达。");
 
+                recoverProfilePositionModes(joints);
                 captureShouldersAtDriverBoundary(joints);
                 verifyReadiness(joints);
                 robot::common::logger()->info(
@@ -1965,6 +2063,7 @@ int main(int argc, char **argv)
                 requireYes(
                     "程序将按头部 -> 双臂 -> waist_yaw 的顺序，把 18 个关节运行到记录点并保持。\n"
                     "每一段运行时，尚未轮到的关节保持当前已确认位置；请确认路径、夹点和线缆安全。");
+                recoverProfilePositionModes(joints);
                 // Reuse the mode-1 guarded shoulder recovery when the current
                 // pose is just outside a known driver boundary.
                 captureShouldersAtDriverBoundary(joints);

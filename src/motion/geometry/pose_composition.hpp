@@ -24,9 +24,7 @@ namespace robot::motion
     //   本函数不读取 URDF，不计算关节转角，也不访问机器人。
     //
     // 下游：正解函数继续连接下一段，或将最终位姿交给调用者。
-    inline Pose composePoses(
-        const Pose &base_from_parent,
-        const Pose &parent_from_child)
+    inline Pose composePoses(const Pose &base_from_parent, const Pose &parent_from_child)
     {
         // 校验输入，并归一化姿态四元数。
         const Pose parent_pose = normalizedPose(base_from_parent);
@@ -34,18 +32,27 @@ namespace robot::motion
 
         // 子连杆原点相对于父连杆的位移，
         // 原本用父连杆坐标表达，现在换算为基准坐标表达。
-        const Eigen::Vector3d displacement_in_base =
-            parent_pose.orientation * child_pose.position;
+        /**
+         * parent_pose.orientation：
+            父连杆相对于基座的朝向。
+
+            child_pose.orientation：
+                子连杆相对于父连杆的朝向。
+
+            displacement_in_base：
+            子连杆相对于基座的朝向。
+
+                四元数 × 三维向量 → 旋转后的三维向量
+         */
+        const Eigen::Vector3d displacement_in_base = parent_pose.orientation * child_pose.position;
 
         Pose result;
 
         // 父连杆原点的位置 + 换算后的父到子位移。
-        result.position =
-            parent_pose.position + displacement_in_base;
+        result.position = parent_pose.position + displacement_in_base;
 
         // 组合两段朝向，顺序不能交换。
-        result.orientation =
-            parent_pose.orientation * child_pose.orientation;
+        result.orientation = parent_pose.orientation * child_pose.orientation;
 
         // 检查结果是否合法，并归一化结果四元数。
         return normalizedPose(result);

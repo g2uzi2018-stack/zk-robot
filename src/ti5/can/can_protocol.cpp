@@ -22,6 +22,7 @@ namespace
     constexpr std::uint8_t kMaximumPositionQueryCommand = 0x1A;
     constexpr std::uint8_t kMinimumPositionQueryCommand = 0x1B;
     constexpr std::uint8_t kClearFaultCommand = 0x0B;
+    constexpr std::uint8_t kProfilePositionCommand = 0x1E;
     constexpr std::uint8_t kCspQueryCommand = 0x41;
     constexpr std::uint8_t kPositionCspCommand = 0x44;
 
@@ -315,6 +316,21 @@ namespace robot::ti5
         feedback.speed_raw = readInt16LittleEndian(frame.data, 2);
         feedback.position_counts = readInt32LittleEndian(frame.data, 4);
         return feedback;
+    }
+
+    // 编码 0x1E Profile Position 目标位置帧。
+    robot::can::CanFrame encodeProfilePosition(
+        const std::uint16_t node_id,
+        const std::int32_t target_position_counts)
+    {
+        validateNodeId(node_id);
+
+        robot::can::CanFrame frame{};
+        frame.id = node_id;
+        frame.data_length = 5;
+        frame.data[0] = kProfilePositionCommand;
+        writeInt32LittleEndian(frame.data, 1, target_position_counts);
+        return frame;
     }
 
     // 编码 0x44 Position CSP 目标位置帧。

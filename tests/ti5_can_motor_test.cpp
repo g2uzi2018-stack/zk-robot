@@ -174,8 +174,19 @@ int main()
                    command.data[3] == 0x01,
                "Position CSP command encoding mismatch");
 
-        motor.requestStopMode();
+        motor.commandProfilePosition(-3.14159265358979323846 / 2.0);
         expect(transport_pointer->sent_frames.size() == 2,
+               "Profile Position must send one frame");
+        const auto &profile_position =
+            transport_pointer->sent_frames.back();
+        expect(profile_position.id == 23 &&
+                   profile_position.data_length == 5 &&
+                   profile_position.data[0] == 0x1E &&
+                   profile_position.data[3] == 0xFF,
+               "Profile Position command encoding mismatch");
+
+        motor.requestStopMode();
+        expect(transport_pointer->sent_frames.size() == 3,
                "STOP-mode request must send one frame");
         const auto &stop_request = transport_pointer->sent_frames.back();
         expect(stop_request.id == 23 &&
@@ -184,7 +195,7 @@ int main()
                "CanMotor STOP-mode request encoding mismatch");
 
         motor.clearFault();
-        expect(transport_pointer->sent_frames.size() == 3,
+        expect(transport_pointer->sent_frames.size() == 4,
                "clear-fault request must send one frame");
         const auto &clear_fault = transport_pointer->sent_frames.back();
         expect(clear_fault.id == 23 &&

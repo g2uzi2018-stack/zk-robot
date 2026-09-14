@@ -167,3 +167,22 @@ add_test(NAME exoskeleton_runtime COMMAND exoskeleton_runtime_test)
 add_executable(ti5_waist_test ti5_waist_test.cpp)
 target_link_libraries(ti5_waist_test PRIVATE ti5_controller)
 add_test(NAME ti5_waist COMMAND ti5_waist_test)
+
+
+# 1. 将上一轮新增的测试源码编译成可执行程序。
+add_executable(motion_urdf_chain_test
+    motion_urdf_chain_test.cpp
+)
+
+# 2. 测试程序使用我们编写的 URDF 运动链加载库。
+target_link_libraries(motion_urdf_chain_test
+    PRIVATE
+        robot_urdf_chain
+)
+
+# 3. 注册到 CTest，并指定运行时传入的 URDF 文件路径。
+add_test(
+    NAME motion_urdf_chain
+    COMMAND motion_urdf_chain_test
+        "${PROJECT_SOURCE_DIR}/T170C-LX-AGX-URDF-1.0/urdf/T170C-V1.1-URDF-1.0_mujoco.urdf"
+)

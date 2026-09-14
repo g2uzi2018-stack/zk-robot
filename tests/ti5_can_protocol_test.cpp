@@ -166,12 +166,21 @@ int main()
         expect(command.data_length == 5 && command.data[0] == 0x44 &&
                    command.data[1] == 0x00 && command.data[2] == 0x00 &&
                    command.data[3] == 0xFF && command.data[4] == 0xFF,
-               "0x44 Position CSP encoding failed");
+                "0x44 Position CSP encoding failed");
 
         const auto clear_fault = encodeClearFaultRequest(node_id);
         expect(clear_fault.data_length == 1 &&
                    clear_fault.data[0] == 0x0B,
                "0x0B clear-fault encoding failed");
+
+        const auto profile_position = encodeProfilePosition(node_id, -65536);
+        expect(profile_position.data_length == 5 &&
+                   profile_position.data[0] == 0x1E &&
+                   profile_position.data[1] == 0x00 &&
+                   profile_position.data[2] == 0x00 &&
+                   profile_position.data[3] == 0xFF &&
+                   profile_position.data[4] == 0xFF,
+               "0x1E Profile Position encoding failed");
 
         robot::can::CanFrame csp{};
         csp.id = node_id;
@@ -193,9 +202,9 @@ int main()
         expectThrows([&] { encodePositionQuery(0x800); },
                       "non-standard node ID must throw");
         expectThrows([&] { encodeStopModeRequest(0x800); },
-                     "STOP request must reject a non-standard node ID");
+                      "STOP request must reject a non-standard node ID");
         expectThrows([&] { encodeClearFaultRequest(0x800); },
-                     "clear-fault request must reject a non-standard node ID");
+                      "clear-fault request must reject a non-standard node ID");
         expectThrows([&] { encodePositionQuery(0); },
                      "zero is not a valid TI5 node ID");
         expectThrows(

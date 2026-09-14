@@ -168,6 +168,14 @@ void CanMotor::commandPositionCsp(const double position_rad)
     bus_.send(encodePositionCsp(node_id_, target_counts));
 }
 
+void CanMotor::commandProfilePosition(const double position_rad)
+{
+    const auto target_counts = radiansToPositionCounts(
+        position_rad,
+        encoder_.counts_per_output_revolution);
+    bus_.send(encodeProfilePosition(node_id_, target_counts));
+}
+
 void CanMotor::requestStopMode()
 {
     bus_.send(encodeStopModeRequest(node_id_));

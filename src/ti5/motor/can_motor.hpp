@@ -50,6 +50,10 @@ public:
     // 当前位置、软限位、驱动器目标范围和反馈新鲜度检查。
     void commandPositionCsp(double position_rad);
 
+    // 发送 0x1E Profile Position 目标。目标应为当前位置或其他已确认的
+    // 安全目标；调用方必须随后查询并确认驱动器进入 mode=8。
+    void commandProfilePosition(double position_rad);
+
     // 发送 0x02，请求驱动器进入 STOP 运行模式。该接口不承诺去使能、
     // 释放转矩或操作抱闸，也不自动等待或验证 mode=0。
     void requestStopMode();

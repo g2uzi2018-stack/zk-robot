@@ -113,6 +113,12 @@ namespace robot::ti5
     // 解码 8 字节 CSP 反馈帧。
     CspFeedback decodeCspFeedback(const robot::can::CanFrame &frame);
 
+    // 编码 0x1E Profile Position 目标位置帧。
+    // 该命令用于从已知但非 CSP 的运行模式切入 mode=8。
+    robot::can::CanFrame encodeProfilePosition(
+        std::uint16_t node_id,
+        std::int32_t target_position_counts);
+
     // 编码 0x44 Position CSP 目标位置帧。
     robot::can::CanFrame encodePositionCsp(std::uint16_t node_id,
                                            std::int32_t target_position_counts);

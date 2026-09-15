@@ -25,7 +25,8 @@ namespace robot::motion
     //
     // 下游：整条链的正解函数，将相邻连杆的变换逐级组合。
     // 不读取 URDF、不访问硬件、不检查运动限位或碰撞。
-    inline Pose jointTransform(const UrdfChainJoint &joint, const double joint_position) // joint_position是几何上的相对几何零点的位置,而不是每次转动的增量
+    // joint_position是几何上的相对几何零点的位置,而不是每次转动的增量
+    inline Pose jointTransform(const UrdfChainJoint &joint, const double joint_position)
     {
         if (!std::isfinite(joint_position))
         {
@@ -71,7 +72,7 @@ namespace robot::motion
             // 把同一个旋转转换成四元数表示。const Eigen::Quaterniond rotation{angle_axis};
             const Eigen::Quaterniond rotation{Eigen::AngleAxisd{joint_position, axis}};
 
-            // 安装朝向 × 局部转动。不能交换相乘顺序 
+            // 安装朝向 × 局部转动。不能交换相乘顺序
             // 这里的 * 是 Eigen 定义的旋转组合运算，不是把两个四元数的四个分量逐项相乘这里的 * 是 Eigen 定义的旋转组合运算，不是把两个四元数的四个分量逐项相乘
             /**
              * | 变量                   | 含义                       |

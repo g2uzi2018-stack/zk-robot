@@ -1,127 +1,128 @@
 #pragma once
 
-#include "motion/geometry/pose_composition.hpp"
-#include "motion/kinematics/urdf_joint_transform.hpp"
+#include "motion/geometry/pose.hpp"
+#include "motion/kinematics/validated_urdf_chain.hpp"
+
+#include <Eigen/Geometry>
 
 #include <array>
 #include <cmath>
 #include <cstddef>
 #include <stdexcept>
 #include <string>
-#include <unordered_set>
 
 namespace robot::motion
 {
 
-    // 上游：测试程序、规划程序或后续运动学模型。
-    //
-    // 输入：
-    //   chain：已加载的运动链，joints 必须按 base -> tip 排列。
-    //   q：模型坐标中的关节位置，顺序对应 chain.joint_names。
-    //      旋转关节使用 rad，移动关节使用 m；固定关节不占用 q。
-    //
-    // 返回：
-    //   chain.tip_link 相对于 chain.base_link 的当前位姿。
-    //
-    // 下游：显示、路径起点计算，或后续逆运动学的位姿误差计算。
-    //
-    // 不读取 URDF、不访问硬件、不检查限位和碰撞、不修改 q。
-    // 本版每次检查链的连接和下标；尚未针对硬实时控制循环优化。
-    template <std::size_t N>
-    Pose forwardKinematics(const UrdfChain &chain, const std::array<double, N> &q)
+// 上游：测试、规划程序或后续具体运动学模型。
+//
+// model：初始化阶段构造的已验证运动链，本函数只读使用。
+// q：相对于模型几何零位的关节位置，不是本次运动增量。
+//    顺序对应 model.chain().joint_names；旋转用 rad，移动用 m。
+//    N 是活动关节数，固定关节不占用 q。
+//
+// 返回：tip_link 相对于 base_link 的当前位姿。
+//       不隐式转换到整机 base_link，也不隐式附加掌心/TCP 偏移。
+//
+// 每次调用检查 q 与计算结果，不重复验证链拓扑、名称和下标，
+// 不重复归一化模型中已验证的 origin 和 axis。
+// 不读取文件、访问硬件、检查限位/碰撞，也不裁剪或修改 q。
+//
+// 失败约定：
+//   std::invalid_argument：q 含 NaN 或无穷大。
+//   std::runtime_error：计算产生无效位姿，例如平移运算溢出。
+//   std::logic_error：已验证模型出现不支持的类型，表示内部约定被破坏。
+// 失败时不返回部分结果；异常路径不作硬实时保证。
+template <std::size_t N>
+[[nodiscard]] Pose forwardKinematics(
+    const ValidatedUrdfChain<N> &model,
+    const std::array<double, N> &q)
+{
+    // q 每次都可能不同，不能因为模型已验证就跳过这项检查。
+    for (std::size_t i = 0; i < N; ++i)
     {
-        static_assert(N > 0, "At least one active joint is required");
-
-        if (chain.base_link.empty() || chain.tip_link.empty() ||
-            chain.base_link == chain.tip_link || chain.joints.empty())
+        if (!std::isfinite(q[i]))
         {
             throw std::invalid_argument(
-                "Invalid chain endpoints or empty chain");
+                "Joint position must be finite at q[" + std::to_string(i) + "]");
         }
-
-        if (chain.joint_names.size() != N)
-        {
-            throw std::invalid_argument(
-                "Joint position count does not match chain");
-        }
-
-        for (const double position : q)
-        {
-            if (!std::isfinite(position))
-            {
-                throw std::invalid_argument(
-                    "Joint positions must be finite");
-            }
-        }
-
-        // 开始时，当前连杆就是基准自身：位置零、朝向单位旋转。
-        Pose base_from_current{};
-        std::string current_link = chain.base_link;
-
-        // 下一个活动关节应该使用 q 的哪个元素。
-        std::size_t next_q_index = 0;
-
-        // base → 肩关节 → upper_arm → 肘关节 → forearm → 固定连接 → tool
-
-        // 记录已经经过的连杆，防止链中出现重复连杆。
-        std::unordered_set<std::string> visited_links{current_link};
-
-        for (const auto &joint : chain.joints)
-        {
-            // 当前关节的父连杆，必须是前一轮已经算到的连杆。
-            if (joint.name.empty() || joint.parent_link != current_link ||
-                joint.child_link.empty())
-            {
-                throw std::invalid_argument("Broken chain at joint: " + joint.name);
-            }
-
-            // insert() 返回结果的 second 表示是否成功插入新元素。
-            // 如果连杆已经出现过，就返回 false。
-            if (!visited_links.insert(joint.child_link).second)
-            {
-                throw std::invalid_argument("Repeated link in chain: " + joint.child_link);
-            }
-
-            double joint_position = 0.0;
-
-            if (joint.type == UrdfJointType::Fixed)
-            {
-                if (joint.q_index.has_value())
-                {
-                    throw std::invalid_argument("Fixed joint must not have q_index");
-                }
-            }
-            else
-            {
-                if (!joint.q_index.has_value() || next_q_index >= N)
-                {
-                    throw std::invalid_argument("Missing or excess active joint index");
-                }
-
-                if (*joint.q_index != next_q_index || joint.name != chain.joint_names[next_q_index])
-                {
-                    throw std::invalid_argument("Joint order mismatch: " + joint.name);
-                }
-
-                joint_position = q.at(next_q_index);
-                ++next_q_index;
-            }
-
-            // 算当前这一节，再接到累计结果上。
-            const Pose parent_from_child = jointTransform(joint, joint_position);
-
-            base_from_current = composePoses(base_from_current, parent_from_child);
-
-            current_link = joint.child_link;
-        }
-
-        if (current_link != chain.tip_link || next_q_index != N)
-        {
-            throw std::invalid_argument(
-                "Chain did not reach the expected tip/count");
-        }
-
-        return base_from_current;
     }
+
+    const UrdfChain &chain = model.chain();
+
+    // 开始时 current 就是 base：零平移、单位旋转。
+    Pose base_from_current{};
+
+    for (const UrdfChainJoint &joint : chain.joints)
+    {
+        // 先取零位安装关系，再叠加这一节的关节运动。
+        // 只复制 Pose 数值，不复制关节名称等结构数据。
+        Pose parent_from_child = joint.origin;
+
+        switch (joint.type)
+        {
+        case UrdfJointType::Fixed:
+            // 固定连接也参与累计，但不读取 q。
+            break;
+
+        case UrdfJointType::Revolute:
+        case UrdfJointType::Continuous:
+        {
+            // 非固定关节的 q_index 存在且 < N，已由模型构造保证。
+            const double joint_position = q[*joint.q_index];
+            const Eigen::AngleAxisd angle_axis{joint_position, joint.axis};
+            const Eigen::Quaterniond local_rotation{angle_axis};
+
+            // 零位安装朝向 × 关节局部转动，不能交换次序。
+            parent_from_child.orientation =
+                joint.origin.orientation * local_rotation;
+            // 旋转不改变本节子连杆原点在父系下的位置。
+            break;
+        }
+
+        case UrdfJointType::Prismatic:
+        {
+            const double joint_position = q[*joint.q_index];
+            const Eigen::Vector3d local_displacement =
+                joint.axis * joint_position;
+
+            // 局部移动量转到父连杆坐标系，再加零位安装位置。
+            parent_from_child.position =
+                joint.origin.position +
+                joint.origin.orientation * local_displacement;
+            // 移动关节不改变本节子连杆相对于父连杆的朝向。
+            break;
+        }
+
+        default:
+            throw std::logic_error(
+                "Unsupported joint type in validated chain: " + joint.name);
+        }
+
+        // 本轮 current 是当前关节的 parent；连接关系由模型保证。
+        // 使用单独的输出对象，避免提前覆盖累计朝向或位置。
+        Pose base_from_child{};
+        base_from_child.position =
+            base_from_current.position +
+            base_from_current.orientation * parent_from_child.position;
+        base_from_child.orientation =
+            base_from_current.orientation * parent_from_child.orientation;
+
+        // 检查新算出的动态结果，并抑制累计四元数的范数漂移。
+        // 这里不是重新检查模型中的静态安装位姿。
+        try
+        {
+            base_from_current = normalizedPose(base_from_child);
+        }
+        catch (const std::invalid_argument &error)
+        {
+            throw std::runtime_error(
+                "Invalid FK result at joint " + joint.name + ": " + error.what());
+        }
+    }
+
+    // 模型已经保证遍历完所有关节后到达 tip_link。
+    return base_from_current;
+}
 
 } // namespace robot::motion

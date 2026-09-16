@@ -267,140 +267,138 @@
 namespace robot::motion
 {
 
-// 计算链末端原点的几何雅可比，不执行求逆或 IK。
-// 几何雅可比表达 在当前构型下，各个关节的运动，会怎样影响末端的线速度和角速度？
-//
-// 上游：测试、速度映射，或后续数值逆解。
-// model：初始化时构造的已验证urdf chain链；本函数不重新检查拓扑和下标。
-// q：模型几何零位下的位置，旋转用 rad，移动用 m，不是增量。
-//
-// 返回 6 x N 矩阵 J：
-//   [v_tip_in_base; omega_tip_in_base] = J(q) * q_dot
+    // 计算链末端原点的几何雅可比，不执行求逆或 IK。
+    // 几何雅可比表达 在当前构型下，各个关节的运动，会怎样影响末端的线速度和角速度？
+    //
+    // 上游：测试、速度映射，或后续数值逆解。
+    // model：初始化时构造的已验证urdf chain链；本函数不重新检查拓扑和下标。
+    // q：模型几何零位下的位置，旋转用 rad，移动用 m，不是增量。
+    //
+    // 返回 6 x N 矩阵 J：
+    //   [v_tip_in_base; omega_tip_in_base] = J(q) * q_dot
 
-//   tip_link是选定的末端连杆
-//   v_tip_in_base末端原点相对于链基准的线速度，用基准坐标轴表达
-//   omega_tip_in_base末端连杆相对于链基准的角速度，用基准坐标轴表达
+    //   tip_link是选定的末端连杆
+    //   v_tip_in_base末端原点相对于链基准的线速度，用基准坐标轴表达
+    //   omega_tip_in_base末端连杆相对于链基准的角速度，用基准坐标轴表达
 
-//   行 0~2：tip_link 原点相对于 base_link 的线速度部分。
-//   行 3~5：tip_link 相对于 base_link 的角速度部分，不是 RPY 导数。
-//   两部分都在 base_link 坐标轴下表达；列顺序与 q 一致。
-//   q_dot 的旋转分量用 rad/s，移动分量用 m/s。
-//   结果速度分别为 m/s 和 rad/s；base 的外部运动不计入。
-//
-// 固定关节参与坐标变换，但不增加矩阵列。
-// 参考点是 tip_link 原点，不隐式附加掌心/TCP 偏移。
-// 不检查限位或碰撞，不修改 model/q，不因奇异构型而拒绝计算。
-//
-// 实现：先调用 FK 求末端位置，再遍历链计算各列，共两遍链遍历。
-// 这是解析几何公式，不是通过有限差分生成雅可比。
-//
-// 失败约定：
-//   invalid_argument：q 非有限，由 forwardKinematics() 检查并抛出。
-//   runtime_error：FK/中间变换/雅可比列出现无效数值。
-//   logic_error：已验证模型出现不支持的类型，违反内部约定。
-// 不返回部分结果；异常路径不作硬实时保证。
-template <std::size_t N>
-[[nodiscard]] Eigen::Matrix<double, 6, N> geometricJacobian(
-    const ValidatedUrdfChain<N> &model,
-    const std::array<double, N> &q)
-{
-    static_assert(N > 0, "Geometric Jacobian requires at least one active joint");
-    using JacobianMatrix = Eigen::Matrix<double, 6, N>;
-
-    // 第一遍：复用现有 FK，同时完成本次 q 的有限性检查。
-    const Pose base_from_tip = forwardKinematics(model, q);
-    const UrdfChain &chain = model.chain();
-
-    JacobianMatrix jacobian = JacobianMatrix::Zero();
-    Pose base_from_parent{};
-
-    // 第二遍：获得每个关节的轴方向和轴上原点，都表达在 base 系中。
-    for (const UrdfChainJoint &joint : chain.joints)
+    //   行 0~2：tip_link 原点相对于 base_link 的线速度部分。
+    //   行 3~5：tip_link 相对于 base_link 的角速度部分，不是 RPY 导数。
+    //   两部分都在 base_link 坐标轴下表达；列顺序与 q 一致。
+    //   q_dot 的旋转分量用 rad/s，移动分量用 m/s。
+    //   结果速度分别为 m/s 和 rad/s；base 的外部运动不计入。
+    //
+    // 固定关节参与坐标变换，但不增加矩阵列。
+    // 参考点是 tip_link 原点，不隐式附加掌心/TCP 偏移。
+    // 不检查限位或碰撞，不修改 model/q，不因奇异构型而拒绝计算。
+    //
+    // 实现：先调用 FK 求末端位置，再遍历链计算各列，共两遍链遍历。
+    // 这是解析几何公式，不是通过有限差分生成雅可比。
+    //
+    // 失败约定：
+    //   invalid_argument：q 非有限，由 forwardKinematics() 检查并抛出。
+    //   runtime_error：FK/中间变换/雅可比列出现无效数值。
+    //   logic_error：已验证模型出现不支持的类型，违反内部约定。
+    // 不返回部分结果；异常路径不作硬实时保证。
+    template <std::size_t N>
+    [[nodiscard]] Eigen::Matrix<double, 6, N> geometricJacobian(const ValidatedUrdfChain<N> &model, const std::array<double, N> &q)
     {
-        try
+        static_assert(N > 0, "Geometric Jacobian requires at least one active joint");
+        using JacobianMatrix = Eigen::Matrix<double, 6, N>;
+
+        // 第一遍：复用现有 FK，同时完成本次 q 的有限性检查。
+        const Pose base_from_tip = forwardKinematics(model, q);
+        const UrdfChain &chain = model.chain();
+
+        JacobianMatrix jacobian = JacobianMatrix::Zero();
+        Pose base_from_parent{};
+
+        // 第二遍：获得每个关节的轴方向和轴上原点，都表达在 base 系中。
+        for (const UrdfChainJoint &joint : chain.joints)
         {
-            // 先应用安装变换，尚未叠加本关节的 q。
-            // 上游关节的运动已经包含在 base_from_parent 中。
-            Pose base_from_joint{};
-            base_from_joint.position =
-                base_from_parent.position +
-                base_from_parent.orientation * joint.origin.position;
-            base_from_joint.orientation =
-                base_from_parent.orientation * joint.origin.orientation;
-            base_from_joint = normalizedPose(base_from_joint);
-
-            if (joint.type == UrdfJointType::Fixed)
+            try
             {
-                // 固定关节没有雅可比列，但必须推进到它的子连杆。
-                base_from_parent = base_from_joint;
-                continue;
+                // 先应用安装变换，尚未叠加本关节的 q。
+                // 上游关节的运动已经包含在 base_from_parent 中。
+                Pose base_from_joint{};
+                base_from_joint.position =
+                    base_from_parent.position +
+                    base_from_parent.orientation * joint.origin.position;
+                base_from_joint.orientation =
+                    base_from_parent.orientation * joint.origin.orientation;
+                base_from_joint = normalizedPose(base_from_joint);
+
+                if (joint.type == UrdfJointType::Fixed)
+                {
+                    // 固定关节没有雅可比列，但必须推进到它的子连杆。
+                    base_from_parent = base_from_joint;
+                    continue;
+                }
+
+                // 存在性、范围和顺序由 ValidatedUrdfChain 保证。
+                const std::size_t q_index = *joint.q_index;
+                const Eigen::Index column = static_cast<Eigen::Index>(q_index);
+
+                // joint.axis 是关节局部轴；不能直接当作 base 系下的轴。
+                const Eigen::Vector3d axis_in_base =
+                    base_from_joint.orientation * joint.axis;
+
+                Eigen::Vector3d linear_part = Eigen::Vector3d::Zero();
+                Eigen::Vector3d angular_part = Eigen::Vector3d::Zero();
+                Pose base_from_child = base_from_joint;
+
+                switch (joint.type)
+                {
+                case UrdfJointType::Revolute:
+                case UrdfJointType::Continuous:
+                {
+                    // Jv_i = a_i x (p_tip - p_joint), Jw_i = a_i。
+                    const Eigen::Vector3d joint_to_tip =
+                        base_from_tip.position - base_from_joint.position;
+                    linear_part = axis_in_base.cross(joint_to_tip);
+                    angular_part = axis_in_base;
+
+                    // 推进到当前子连杆，供下一节使用。
+                    const Eigen::AngleAxisd angle_axis{q[q_index], joint.axis};
+                    const Eigen::Quaterniond local_rotation{angle_axis};
+                    base_from_child.orientation =
+                        base_from_joint.orientation * local_rotation;
+                    break;
+                }
+
+                case UrdfJointType::Prismatic:
+                    // Jv_i = a_i, Jw_i = 0。
+                    linear_part = axis_in_base;
+                    base_from_child.position =
+                        base_from_joint.position + axis_in_base * q[q_index];
+                    break;
+
+                default:
+                    throw std::logic_error(
+                        "Unsupported joint type in validated chain: " + joint.name);
+                }
+
+                // 有限位姿并不保证相减、叉乘后仍然有限。
+                if (!linear_part.allFinite() || !angular_part.allFinite())
+                {
+                    throw std::runtime_error(
+                        "Non-finite Jacobian column at joint: " + joint.name);
+                }
+
+                jacobian.template block<3, 1>(0, column) = linear_part;
+                jacobian.template block<3, 1>(3, column) = angular_part;
+
+                // 检查动态计算结果，归一化累计姿态，再进入下一节。
+                base_from_parent = normalizedPose(base_from_child);
             }
-
-            // 存在性、范围和顺序由 ValidatedUrdfChain 保证。
-            const std::size_t q_index = *joint.q_index;
-            const Eigen::Index column = static_cast<Eigen::Index>(q_index);
-
-            // joint.axis 是关节局部轴；不能直接当作 base 系下的轴。
-            const Eigen::Vector3d axis_in_base =
-                base_from_joint.orientation * joint.axis;
-
-            Eigen::Vector3d linear_part = Eigen::Vector3d::Zero();
-            Eigen::Vector3d angular_part = Eigen::Vector3d::Zero();
-            Pose base_from_child = base_from_joint;
-
-            switch (joint.type)
-            {
-            case UrdfJointType::Revolute:
-            case UrdfJointType::Continuous:
-            {
-                // Jv_i = a_i x (p_tip - p_joint), Jw_i = a_i。
-                const Eigen::Vector3d joint_to_tip =
-                    base_from_tip.position - base_from_joint.position;
-                linear_part = axis_in_base.cross(joint_to_tip);
-                angular_part = axis_in_base;
-
-                // 推进到当前子连杆，供下一节使用。
-                const Eigen::AngleAxisd angle_axis{q[q_index], joint.axis};
-                const Eigen::Quaterniond local_rotation{angle_axis};
-                base_from_child.orientation =
-                    base_from_joint.orientation * local_rotation;
-                break;
-            }
-
-            case UrdfJointType::Prismatic:
-                // Jv_i = a_i, Jw_i = 0。
-                linear_part = axis_in_base;
-                base_from_child.position =
-                    base_from_joint.position + axis_in_base * q[q_index];
-                break;
-
-            default:
-                throw std::logic_error(
-                    "Unsupported joint type in validated chain: " + joint.name);
-            }
-
-            // 有限位姿并不保证相减、叉乘后仍然有限。
-            if (!linear_part.allFinite() || !angular_part.allFinite())
+            catch (const std::invalid_argument &error)
             {
                 throw std::runtime_error(
-                    "Non-finite Jacobian column at joint: " + joint.name);
+                    "Invalid Jacobian state at joint " + joint.name +
+                    ": " + error.what());
             }
-
-            jacobian.template block<3, 1>(0, column) = linear_part;
-            jacobian.template block<3, 1>(3, column) = angular_part;
-
-            // 检查动态计算结果，归一化累计姿态，再进入下一节。
-            base_from_parent = normalizedPose(base_from_child);
         }
-        catch (const std::invalid_argument &error)
-        {
-            throw std::runtime_error(
-                "Invalid Jacobian state at joint " + joint.name +
-                ": " + error.what());
-        }
+
+        return jacobian;
     }
-
-    return jacobian;
-}
 
 } // namespace robot::motion

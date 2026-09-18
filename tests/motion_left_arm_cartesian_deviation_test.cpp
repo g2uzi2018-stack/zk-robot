@@ -148,17 +148,17 @@ namespace
 
         CartesianIkPathOptions path_options;
 
-path_options.max_translation_step =
-    path.translationLength() / 100.0;
+        path_options.max_translation_step =
+            path.translationLength() / 100.0;
 
-path_options.max_rotation_step =
-    path.rotationAngle() / 100.0;
+        path_options.max_rotation_step =
+            path.rotationAngle() / 100.0;
 
         path_options.max_rotational_joint_step =
             0.1;
 
         path_options.max_segments =
-            100;
+            200;
 
         IkOptions ik_options;
 
@@ -177,9 +177,51 @@ path_options.max_rotation_step =
                 path_options,
                 ik_options);
 
-        require(
-            cartesian.completed(),
-            "Cartesian IK failed");
+        if (!cartesian.completed())
+        {
+            std::cerr
+                << "Cartesian IK failed\n";
+
+            std::cerr
+                << "message: "
+                << cartesian.message
+                << "\n";
+
+            std::cerr
+                << "completed_progress: "
+                << cartesian.completed_progress
+                << "\n";
+
+            if (cartesian.failed_progress.has_value())
+            {
+                std::cerr
+                    << "failed_progress: "
+                    << *cartesian.failed_progress
+                    << "\n";
+            }
+            else
+            {
+                std::cerr
+                    << "failed_progress: none\n";
+            }
+
+            if (cartesian.failed_ik_status.has_value())
+            {
+                std::cerr
+                    << "failed_ik_status: "
+                    << static_cast<int>(
+                           *cartesian.failed_ik_status)
+                    << "\n";
+            }
+            else
+            {
+                std::cerr
+                    << "failed_ik_status: none\n";
+            }
+
+            throw std::runtime_error(
+                "Cartesian IK failed");
+        }
 
         JointVelocityLimits<kJointCount>
             velocity_limits{

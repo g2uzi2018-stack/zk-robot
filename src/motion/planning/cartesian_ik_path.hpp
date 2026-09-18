@@ -390,11 +390,12 @@ namespace robot::motion::planning
                 std::max(
                     translation_segments,
                     rotation_segments);
-
+            constexpr double kSegmentCountTolerance = 1e-9;
             if (!std::isfinite(required_segments) ||
                 required_segments >
                     static_cast<double>(
-                        path_options.max_segments))
+                        path_options.max_segments) +
+                        kSegmentCountTolerance)
             {
                 return finish(
                     CartesianIkPathStatus::SamplingLimit,

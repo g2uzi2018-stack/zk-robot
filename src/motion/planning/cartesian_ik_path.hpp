@@ -12,6 +12,7 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
+#include <iostream>
 
 namespace robot::motion::planning
 {
@@ -538,6 +539,15 @@ namespace robot::motion::planning
 
                     result.failed_ik_status =
                         ik_result.status;
+
+                    std::cerr
+                        << "IK failed progress="
+                        << progress
+                        << " status="
+                        << static_cast<int>(ik_result.status)
+                        << " message="
+                        << ik_result.message
+                        << std::endl;
 
                     return finish(
                         CartesianIkPathStatus::IkFailure,
